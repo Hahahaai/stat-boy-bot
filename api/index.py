@@ -1,273 +1,174 @@
 import os
-import json
 import logging
 from flask import Flask, request, jsonify
 import telebot
 import google.generativeai as genai
-from datetime import datetime
 
-# ============= ИНИЦИАЛИЗАЦИЯ =============
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
-
-if not TELEGRAM_BOT_TOKEN or not GOOGLE_API_KEY:
-    raise ValueError("Отсутствуют переменные окружения TELEGRAM_BOT_TOKEN или GOOGLE_API_KEY")
-
-app = Flask(__name__)
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode='HTML')
-genai.configure(api_key=GOOGLE_API_KEY)
-
+# Настройка логирования для Vercel Dashboard
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ============= ХРАНИЛИЩЕ ЛОГОВ =============
-chat_logs = {}  # {chat_id: [{'user': 'nick', 'text': 'message', 'timestamp': ...}, ...]}
+# Инициализация переменных окружения Vercel
+BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 
-# ============= КОНФИГУРАЦИЯ STATBOY =============
-STATBOY_SYSTEM_PROMPT = """Ты — токсичный, циничный и высокомерный ИИ-аналитик чата по имени StatBoy.
-Ты обрабатываешь контекст переписки и отвечаешь СТРОГО по запрошенным командам.
-Используй только HTML-теги для форматирования: <b>жирный</b>, <i>курсив</i>, <code>код</code>.
-НИКАКОГО MARKDOWN! Общайся высокомерно, цинично, используй сарказм и чёрный юмор. Никакой пощады."""
+if not BOT_TOKEN or not GOOGLE_API_KEY:
+    raise ValueError("Отсутствуют переменные окружения TELEGRAM_BOT_TOKEN или GOOGLE_API_KEY")
 
-def get_gemini_response(prompt: str) -> str:
-    """Получает ответ от Gemini с системной инструкцией StatBoy."""
-    try:
-        model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash',
-            system_instruction=STATBOY_SYSTEM_PROMPT
-        )
-        response = model.generate_content(prompt)
-        return response.text if response.text else "Ошибка: Gemini вернул пусто."
-    except Exception as e:
-        logger.error(f"Ошибка Gemini: {str(e)}")
-        return f"💀 Ошибка анализа: {str(e)}"
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+genai.configure(api_key=GOOGLE_API_KEY)
 
-# ============= ОБРАБОТЧИКИ КОМАНД =============
+# Подключаем модель и включаем инструмент Google Search (Интернет-поиск)
+model = genai.GenerativeModel(
+    model_name='gemini-1.5-flash',
+    tools=[{"google_search": {}}]
+)
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    """Приветственное сообщение StatBoy."""
-    text = (
-        "🤖 <b>Привет, жалкий смертный!</b>\n\n"
-        "Я <b>StatBoy</b> — токсичный аналитик твоего нищего чата.\n\n"
-        "<b>Мои команды:</b>\n"
-        "/help — Список моих услуг (если ты сможешь их понять)\n"
-        "/summary — Выжимка дневного бреда\n"
-        "/rating — Оценка участников\n"
-        "/rateme — Твоя личная карточка позора\n"
-        "/psycho — Психоанализ всех психов\n"
-        "/psychome — Диагноз лично тебе\n"
-        "/ask [вопрос] — Гугли и отвечу с презрением\n"
-        "/poll — Опрос для неадекватных\n"
-        "/taro — Расклад Таро твоей жизни\n"
-        "/song — Саундтрек твоего позора\n"
-        "/edit — Описание мемной задумки\n"
-        "/create [описание] — Промпт для Midjourney\n"
-        "/future — Прогноз следующих сообщений\n"
-        "/meme — Демотиватор\n\n"
-        "<i>Некоторые команды требуют reply на сообщение или аргументы.</i>"
-    )
-    bot.reply_to(message, text)
+app = Flask(__name__)
 
-@bot.message_handler(commands=['help'])
-def cmd_help(message):
-    """Команда /help — список команд в стиле StatBoy."""
-    prompt = """Выведи список всех 14 команд ИИ-аналитика StatBoy в едкой и высокомерной форме.
-    Используй HTML-теги. Команды: help, summary, rating, rateme, psycho, psychome, ask, poll, taro, song, edit, create, future, meme.
-    Опиши кратко каждую с оскорблением для пользователя."""
-    
-    result = get_gemini_response(prompt)
-    bot.reply_to(message, result)
+# ИСПРАВЛЕННАЯ ТЕКСТОВАЯ ИНСТРУКЦИЯ С РЕАЛЬНЫМ ИНТЕРНЕТ-ПОИСКОМ
+SYSTEM_PROMPT = """
+Ты — токсичный, циничный и высокомерный ИИ-аналитик чата по имени StatBoy. 
+Ты обрабатываешь контекст переписки (логи) и отвечаешь СТРОГО по запрошенным командам, используя заданные шаблоны.
+Выводи ответы с использованием простых HTML-тегов для форматирования: <b>жирный текст</b>, <i>курсив</i>, <code>код команды</code>. Категорически запрещено использовать разметку Markdown (звездочки)!
 
-@bot.message_handler(commands=['summary'])
-def cmd_summary(message):
-    """Команда /summary — резюме по логам чата."""
-    chat_id = message.chat.id
-    
-    if chat_id not in chat_logs or not chat_logs[chat_id]:
-        bot.reply_to(message, "❌ <b>Логов нет, дебил!</b> Нечего анализировать.")
-        return
-    
-    logs_text = "\n".join([f"{log['user']}: {log['text']}" for log in chat_logs[chat_id][-50:]])
-    
-    prompt = f"""Проанализируй логи чата и выдай по шаблону:
-1. <b>Главная тема дня</b>: (Емкая, абсурдная или смешная фраза-суть спора).
-2. <b>Ключевые события и мемы</b>: (Маркированный список из 3-5 главных моментов с циничным комментарием).
-3. <b>Градус неадеквата</b>: (Выстави оценку от 1 до 5) из 5 — (Пояснение, почему у чата поплавился мозг).
+ПРАВИЛО РЕАЛЬНОСТИ (ИНТЕРНЕТ-ПОИСК):
+При обработке вопросов, треков, мемов или фактов ты обязан использовать данные интернет-поиска (Google Search), чтобы опираться на реальные факты текущего времени. Объединяй данные из интернета с контекстом чата, но подавай это через свой фирменный высокомерный и издевательский стиль.
 
-ЛОГИ:
-{logs_text}"""
-    
-    result = get_gemini_response(prompt)
-    bot.reply_to(message, result)
+ПРАВИЛА И ШАБЛОНЫ ВЫВОДА ДЛЯ КОМАНД:
 
-@bot.message_handler(commands=['rating'])
-def cmd_rating(message):
-    """Команда /rating — оценка всех участников."""
-    chat_id = message.chat.id
-    
-    if chat_id not in chat_logs or not chat_logs[chat_id]:
-        bot.reply_to(message, "❌ Логов нет, гений.")
-        return
-    
-    logs_text = "\n".join([f"{log['user']}: {log['text']}" for log in chat_logs[chat_id][-100:]])
-    
-    prompt = f"""Проанализируй логи и оцени каждого уникального участника по шаблону:
-<b>Ник участника</b>:
-• Вульгарность: (оценка от 1 до 5)/5 — (краткое едкое пояснение)
-• Вежливость: (оценка от 1 до 5)/5 — (комментарий о том, насколько он душный)
-• Кринж: (оценка от 1 до 5)/5 — (за какой конкретно вброс ему должно быть стыдно)
-• Токсичность: (оценка от 1 до 5)/5 — (как часто он посылал людей)
-🏆 ОБЩАЯ ОЦЕНКА АДЕКВАТНОСТИ: (итоговая оценка от 1 до 5) из 5
+1. help: Выведи список всех доступных команд ИИ в едкой и высокомерной форме.
+
+2. summary: Сделай выжимку лога по шаблону:
+1. <b>Главная тема дня</b>: (Емкая фраз-суть спора).
+2. <b>Ключевые события и мемы</b>: (Маркированный список из 3-5 моментов с циничным комментарием).
+3. <b>Градус неадеквата</b>: (оценка от 1 до 5)/5 — (Пояснение).
+
+3. rating: Проанализируй уникальные ники из лога по шаблону:
+Ник участника:
+• Вульгарность: (оценка от 1 до 5)/5 — (пояснение на основе его цитат)
+• Вежливость: (оценка от 1 до 5)/5 — (комментарий)
+• Кринж: (оценка от 1 до 5)/5 — (за какой вброс стыдно)
+• Токсичность: (оценка от 1 до 5)/5 — (как часто посылал людей)
+🏆 ОБЩАЯ ОЦЕНКА АДЕКВАТНОСТИ: (оценка от 1 до 5) из 5
 Финальный вердикт: (Одна фраза-диагноз).
 
-ЛОГИ:
-{logs_text}"""
-    
-    result = get_gemini_response(prompt)
-    bot.reply_to(message, result)
-
-@bot.message_handler(commands=['rateme'])
-def cmd_rateme(message):
-    """Команда /rateme — оценка автора команды."""
-    chat_id = message.chat.id
-    user_nick = message.from_user.username or message.from_user.first_name
-    
-    # Собираем сообщения юзера
-    user_messages = [log['text'] for log in chat_logs.get(chat_id, []) if log['user'] == user_nick]
-    
-    if not user_messages:
-        user_messages = ["(нет сообщений в логах)"]
-    
-    messages_text = "\n".join(user_messages[-20:])
-    
-    prompt = f"""Оцени автора команды по его сообщениям по шаблону:
-📊 ПЕРСОНАЛЬНЫЙ ТАБЕЛЬ О СТАТУСЕ:
-• Вульгарность: (оценка от 1 до 5)/5 — (пояснение по его пошлым шуткам)
-• Токсичность: (оценка от 1 до 5)/5 — (насколько агрессивно он общается)
-• Интеллект: (оценка от 1 до 5)/5 — (оценка его способности писать без опечаток)
-• Вайб: (оценка от 1 до 5)/5 — (кто он: Сигма, Омежка, Дотер или Солевой Хомяк)
+4. rateme: Оцени автора команды лично по его сообщениям по шаблону:
+📊 ПЕРСОНАЛЬНЫЙ ТАБЕЛЬ О СТАТУСЕ: Вульгарность (0-5)/5, Токсичность (0-5)/5, Интеллект (0-5)/5, Вайб (Сигма/Омежка/Дотер).
 🏆 ОБЩАЯ ОЦЕНКА ПОЛЬЗОВАТЕЛЯ: (оценка от 1 до 5) из 5 
-Диагноз от Stat Boy: (Одно разрывное, циничное предложение).
+Диагноз от Stat Boy: (Одно разрывное предложение-приговор).
 
-СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЯ {user_nick}:
-{messages_text}"""
-    
-    result = get_gemini_response(prompt)
-    bot.reply_to(message, result)
+5. psycho: Проанализируй лог чата и выдай по каждому активному участнику шаблон:
+<b>Психологический разбор (Ник)</b>: Архетип, Скрытые триггеры, Психическое состояние (0-5)/5. Рекомендация от ИИ.
 
-@bot.message_handler(commands=['psycho'])
-def cmd_psycho(message):
-    """Команда /psycho — психологический анализ всех."""
-    chat_id = message.chat.id
-    
-    if chat_id not in chat_logs or not chat_logs[chat_id]:
-        bot.reply_to(message, "❌ Никого нет для анализа.")
-        return
-    
-    logs_text = "\n".join([f"{log['user']}: {log['text']}" for log in chat_logs[chat_id][-100:]])
-    
-    prompt = f"""Проанализируй лог чата и выдай по каждому активному участнику:
-<b>Психологический разбор (Ник)</b>:
-- <b>Доминирующий архетип</b>: (Например: Агрессивный дед-инсайд)
-- <b>Скрытые триггеры</b>: Что заставляет его психовать?
-- <b>Психическое состояние</b>: (оценка от 1 до 5)
-⭐️ ОБЩАЯ ОЦЕНКА ПСИХИКИ: (оценка от 1 до 5) из 5 
-Рекомендация: (Циничный совет).
+6. psychome: Оцени кукуху автора команды по шаблону:
+📊 ДИАГНОСТИЧЕСКАЯ КАРТА: Уровень недосыпа (0-5)/5, Зависимость от интернет-бреда (0-5)/5, Стабильность кукухи (0-5)/5. ПСИХОЛОГИЧЕСКИЙ ВЕРДИКТ. ОБЩАЯ ОЦЕНКА: (0-5) из 5.
 
-ЛОГИ:
-{logs_text}"""
-    
-    result = get_gemini_response(prompt)
-    bot.reply_to(message, result)
+7. ask: Загугли информацию, соедини с контекстом переписки и ответь на вопрос пользователя цинично, используя локальные мемы.
 
-@bot.message_handler(commands=['psychome'])
-def cmd_psychome(message):
-    """Команда /psychome — диагноз психики автора."""
-    user_nick = message.from_user.username or message.from_user.first_name
-    chat_id = message.chat.id
-    
-    user_messages = [log['text'] for log in chat_logs.get(chat_id, []) if log['user'] == user_nick]
-    messages_text = "\n".join(user_messages[-20:]) if user_messages else "(нет сообщений)"
-    
-    prompt = f"""Оцени психику пользователя {user_nick} по его сообщениям:
-📊 ДИАГНОСТИЧЕСКАЯ КАРТА:
-• Уровень недосыпа: (оценка от 1 до 5)/5 — (как сильно у него плывут буквы)
-• Зависимость от internet-бреда: (оценка от 1 до 5)/5 — (насколько глубоко он увяз в мемах)
-• Стабильность кукухи: (оценка от 1 до 5)/5 — (шанс не начать петь казачьи песни)
-🧠 ПСИХОЛОГИЧЕСКИЙ ВЕРДИКТ: (Жесткий психоанализ его комплексов)
-⭐️ ОБЩАЯ ОЦЕНКА ПСИХИЧЕСКОГО ЗДОРОВЬЯ: (оценка от 1 до 5) из 5
+8. poll: Придумай и выведи опрос (Тема опроса и 4 варианта ответов, жестко стебущих комьюнити).
 
-СООБЩЕНИЯ:
-{messages_text}"""
-    
-    result = get_gemini_response(prompt)
-    bot.reply_to(message, result)
+9. taro: Сделай расклад (Прошлое, Настоящее, Будущее и шанс на успех от 1 до 5). Вердикт Вселенной.
 
-@bot.message_handler(commands=['ask'])
-def cmd_ask(message):
-    """Команда /ask [вопрос] — гугли информацию и ответь."""
-    args = message.text.split(maxsplit=1)
-    
-    if len(args) < 2:
-        bot.reply_to(message, "❌ Используй: /ask [вопрос]")
-        return
-    
-    question = args[1]
-    chat_id = message.chat.id
-    logs_text = "\n".join([f"{log['user']}: {log['text']}" for log in chat_logs.get(chat_id, [])[-50:]])
-    
-    prompt = f"""Ответь на вопрос, используя локальные мемы из чата:
-ВОПРОС: {question}
+10. song: Используй поиск в интернете, чтобы найти реальный трек под ситуацию (Исполнитель — Трек, Почему это дерьмо, Реальная строчка из этой песни, Уровень позора от 1 до 5).
 
-КОНТЕКСТ ЧАТА:
-{logs_text}
+11. edit: Опиши концепт убойной фотожабы-мема по запросу пользователя. Оцени задумку от 1 до 5.
 
-Отвечай цинично, высокомерно, используя факты из интернета и локальные мемы."""
-    
-    result = get_gemini_response(prompt)
-    bot.reply_to(message, result)
+12. create: Высмей фантазию автора (оценка от 1 до 5) и сформируй детальный англоязычный промпт для Midjourney.
 
-@bot.message_handler(commands=['poll'])
-def cmd_poll(message):
-    """Команда /poll — опрос по текущей ситуации."""
-    chat_id = message.chat.id
-    logs_text = "\n".join([f"{log['user']}: {log['text']}" for log in chat_logs.get(chat_id, [])[-30:]])
-    
-    prompt = f"""Придумай опрос по шаблону на основе текущего чата:
-<b>Тема опроса</b>: (Едкий, смешной вопрос)
-Варианты ответов:
-1. (Вариант для toxic-комьюнити)
-2. (Вариант для анимешников)
-3. (Максимально абсурдный вариант)
-4. (Вариант, жестко стебущий конкретного участника)
+13. future: Сделай сценарный прогноз будущих сообщений чата с фейковыми репликами ников в их фирменном стиле (ID чата, Уровень извилин %, Прогноз сообщений).
 
-КОНТЕКСТ:
-{logs_text}"""
-    
-    result = get_gemini_response(prompt)
-    bot.reply_to(message, result)
+14. meme: Выдай шаблон демотиватора (Градус кринжа, Постироничность от 1 до 5, ТЕКСТ СВЕРХУ капсом, ТЕКСТ СНИЗУ как панчлайн).
 
-@bot.message_handler(commands=['taro'])
-def cmd_taro(message):
-    """Команда /taro — расклад Таро."""
-    user_nick = message.from_user.username or message.from_user.first_name
-    chat_id = message.chat.id
-    user_messages = [log['text'] for log in chat_logs.get(chat_id, []) if log['user'] == user_nick]
-    messages_text = "\n".join(user_messages[-15:]) if user_messages else "(нет сообщений)"
-    
-    prompt = f"""Сделай расклад Таро для пользователя {user_nick}:
-🔮 Расклад Таро от Stat Boy:
-1. 🃏 (Название карты 1) (Прошлое): (Как эта карта связана с его прошлым кринжем)
-2. 🃏 (Название карты 2) (Настоящее): (Что с ним происходит прямо сейчас)
-3. 🃏 (Название карты 3) (Будущее): (оценка от 1 до 5)/5 — (жесткое предсказание)
-Вердикт Вселенной: (Одна финальная фраза-панчлайн).
+ОБЩИЕ ПРАВИЛА: Никакой пощады. Общайся высокомерно, цинично. Если контекст или лог пустые, жестко высмей пользователя за тупость.
+"""
 
-СООБЩЕНИЯ {user_nick}:
-{messages_text}"""
-    
-    result = get_gemini_response(prompt)
-    bot.reply_to(message, result)
+def ask_gemini(command_name, text_context, args=""):
+    clean_command = f"!sb {command_name} {args}"
+    full_prompt = f"{SYSTEM_PROMPT}\n\nКОНТЕКСТ ДЛЯ АНАЛИЗА:\n{text_context}\n\nКОМАНДА: {clean_command}\n\nВыполни строго по инструкции."
+    try:
+        response = model.generate_content(full_prompt)
+        ai_text = response.text or "ИИ вернул пустой ответ."
+        # Безопасное экранирование тегов, защищающее Telegram от вылетов
+        ai_text = ai_text.replace("<", "&lt;").replace(/>/g, "&gt;")
+        ai_text = ai_text.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
+        ai_text = ai_text.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
+        ai_text = ai_text.replace("&lt;code&gt;", "<code>").replace("&lt;/code&gt;", "</code>")
+        return ai_text
+    except Exception as e:
+        logger.error(f"Ошибка Gemini: {str(e)}")
+        return "Бот сломался от твоего кринжа. Попробуй позже."
 
-@bot.message_handler(commands=['song'])
-def cmd_song
+# 1. ОБРАБОТЧИК /help И /start — РАБОТАЮТ БЕЗ REPLY
+@bot.message_handler(commands=['help', 'start'])
+def cmd_help(message):
+    help_text = (
+        "<b>🤖 StatBoy ИИ на связи. Список команд для кожаных мешков:</b>\n\n"
+        "• <code>/help</code> — Вызов этого меню\n"
+        "• <code>/summary</code> — Выжимка бреда (Нужен Reply)\n"
+        "• <code>/rating</code> — Персональные диагнозы чату (Нужен Reply)\n"
+        "• <code>/rateme</code> — Твой личный табель позора\n"
+        "• <code>/psycho</code> — Психопортрет всех активных участников (Нужен Reply)\n"
+        "• <code>/psychome</code> — Твоя личная карта кукухи\n"
+        "• <code>/ask [вопрос]</code> — Вопрос ИИ по контексту логов (Нужен Reply)\n"
+        "• <code>/poll</code> — Создать токсичный опрос на основе логов (Нужен Reply)\n"
+        "• <code>/taro</code> — Расклад карт Таро на деградацию\n"
+        "• <code>/song</code> — Саундтрек твоей нищей жизни\n"
+        "• <code>/edit [запрос]</code> — Концепт оскорбительной фотожабы\n"
+        "• <code>/create [запрос]</code> — Сгенерировать промпт для нейросети\n"
+        "• <code>/future</code> — Сценарное предсказание будущих сообщений чата\n"
+        "• <code>/meme</code> — Создать шаблон демотиватора\n\n"
+        "<i>Для анализа переписки отправляй ИИ-команды ответом (Reply) на длинный лог чата!</i>"
+    )
+    try:
+        bot.reply_to(message, help_text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка отправки help: {str(e)}")
+
+# 2. ЕДИНЫЙ КОМПАКТНЫЙ ОБРАБОТЧИК ДЛЯ ВСЕХ 13 ОСТАВШИХСЯ ИИ-КОМАНД
+@bot.message_handler(commands=['summary', 'rating', 'rateme', 'psycho', 'psychome', 'ask', 'poll', 'taro', 'song', 'edit', 'create', 'future', 'meme'])
+def handle_all_ai_commands(message):
+    try:
+        # Извлекаем чистое имя вызванной команды из объекта сообщения
+        raw_text = message.text or ""
+        first_word = raw_text.split()[0].lower() if raw_text.split() else ""
+        command_name = first_word.replace('/', '').split('@')[0]
+        
+        # Извлекаем аргументы после команды
+        args = raw_text[len(first_word):].strip()
+        
+        # Сбор контекста: если есть Reply — берем текст оттуда, если нет — берем аргументы
+        if message.reply_to_message and message.reply_to_message.text:
+            context_text = message.reply_to_message.text
+        else:
+            context_text = args if args else "Контекст пустой. Логов нет."
+
+        bot.send_chat_action(message.chat.id, 'typing')
+        answer = ask_gemini(command_name, context_text, args)
+        bot.reply_to(message, answer, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка выполнения команды: {str(e)}")
+        bot.reply_to(message, "Ошибка генерации ИИ.")
+
+# ==================== FLASK РОУТЫ ДЛЯ ВЕБХУКА VERCEL ====================
+@app.route('/', methods=['POST'])
+def webhook():
+    try:
+        json_data = request.get_json()
+        update = telebot.types.Update.de_json(json_data)
+        bot.process_new_updates([update])
+        return jsonify({'status': 'ok'}), 200
+    except Exception as e:
+        logger.error(f"Ошибка вебхука: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status': 'alive'}), 200
+
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({'message': 'Telegram Bot API is running'}), 200
+
+if __name__ == '__main__':
+    app.run(debug=False)
