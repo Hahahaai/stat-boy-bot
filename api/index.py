@@ -51,101 +51,96 @@ def analyze_with_gemini(text: str, command: str) -> str:
         return f"Ошибка анализа: {str(e)}"
 
 # ============= ОБРАБОТЧИКИ КОМАНД =============
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    """Приветственное сообщение."""
-    text = (
-        "🤖 <b>Привет!</b>\n\n"
-        "Я бот для анализа текстов через AI.\n\n"
-        "<b>Команды:</b>\n"
-        "/help — Объяснить структуру текста\n"
-        "/summary — Краткое резюме\n"
-        "/rating — Оценка текста\n"
-        "/rateme — Рейтинг сообщения\n"
-        "/psycho — Психоанализ\n\n"
-        "<i>Используй как reply на сообщение!</i>"
-    )
-    bot.reply_to(message, text)
-
-@bot.message_handler(commands=['help'])
+# 1. Исправленный /help и /start — работают БЕЗ Reply!
+@bot.message_handler(commands=['help', 'start'])
 def cmd_help(message):
-    """Команда /help — объяснение структуры."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text
-    if not reply_text:
-        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
-        return
-    
-    result = analyze_with_gemini(reply_text, 'help')
-    bot.reply_to(message, f"📝 <b>Анализ структуры:</b>\n\n{result}")
+    help_text = (
+        "<b>🤖 StatBoy ИИ на связи. Список команд для кожаных мешков:</b>\n\n"
+        "• <code>/help</code> — Вызов этого меню\n"
+        "• <code>/summary</code> — Показать выжимку бреда (Нужен Reply)\n"
+        "• <code>/rating</code> — Персональные диагнозы чату (Нужен Reply)\n"
+        "• <code>/rateme</code> — Твой личный табель позора (Reply или свой текст)\n"
+        "• <code>/psycho</code> — Психопортрет всех активных участников (Нужен Reply)\n"
+        "• <code>/psychome</code> — Твоя личная карта кукухи (Reply или свой текст)\n"
+        "• <code>/ask [вопрос]</code> — Вопрос ИИ по контексту логов (Нужен Reply)\n"
+        "• <code>/poll</code> — Создать toxic-опрос на основе логов (Нужен Reply)\n"
+        "• <code>/taro</code> — Расклад карт Таро на деградацию\n"
+        "• <code>/song</code> — Саундтрек твоей нищей жизни\n"
+        "• <code>/edit [запрос]</code> — Концепт оскорбительной фотожабы\n"
+        "• <code>/create [запрос]</code> — Сгенерировать промпт для нейросети\n"
+        "• <code>/future</code> — Сценарное предсказание будущих сообщений чата\n"
+        "• <code>/meme</code> — Создать шаблон демотиватора\n\n"
+        "<i>Для анализа переписки отправляй аналитические команды ответом (Reply) на длинный лог чата!</i>"
+    )
+    try:
+        bot.reply_to(message, help_text, parse_mode="HTML")
+    except Exception as e:
+        if 'logger' in globals():
+            logger.error(f"Ошибка отправки help: {str(e)}")
 
+# Универсальный обработчик для ИИ-команд
+def process_ai_command(message, command_name):
+    # Если есть реплай — берем текст оттуда, если нет — берем аргументы после команды
+    if message.reply_to_message and message.reply_to_message.text:
+        context_text = message.reply_to_message.text
+    else:
+        raw_text = message.text or ""
+        _, _, args = raw_text.partition(' ')
+        context_text = args.strip()
+
+    if not context_text:
+        bot.reply_to(message, "❌ Контекст пуст! Ответь этой командой на лог чата или напиши текст после команды.")
+        return
+
+    try:
+        bot.send_chat_action(message.chat.id, 'typing')
+        # Вызываем функцию Клода для генерации
+        answer = analyze_with_gemini(context_text, command_name)
+        bot.reply_to(message, answer, parse_mode="HTML")
+    except Exception as e:
+        if 'logger' in globals():
+            logger.error(f"Ошибка выполнения {command_name}: {str(e)}")
+        bot.reply_to(message, "Ошибка генерации ИИ.")
+
+# Регистрируем все оставшиеся 13 ИИ-команд
 @bot.message_handler(commands=['summary'])
-def cmd_summary(message):
-    """Команда /summary — резюме."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text
-    if not reply_text:
-        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
-        return
-    
-    result = analyze_with_gemini(reply_text, 'summary')
-    bot.reply_to(message, f"📌 <b>Резюме:</b>\n\n{result}")
+def cmd_summary(message): process_ai_command(message, 'summary')
 
 @bot.message_handler(commands=['rating'])
-def cmd_rating(message):
-    """Команда /rating — оценка текста."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text
-    if not reply_text:
-        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
-        return
-    
-    result = analyze_with_gemini(reply_text, 'rating')
-    bot.reply_to(message, f"⭐ <b>Оценка:</b>\n\n{result}")
+def cmd_rating(message): process_ai_command(message, 'rating')
 
 @bot.message_handler(commands=['rateme'])
-def cmd_rateme(message):
-    """Команда /rateme — рейтинг."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text
-    if not reply_text:
-        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
-        return
-    
-    result = analyze_with_gemini(reply_text, 'rateme')
-    bot.reply_to(message, f"🎯 <b>Рейтинг:</b>\n\n{result}")
+def cmd_rateme(message): process_ai_command(message, 'rateme')
 
 @bot.message_handler(commands=['psycho'])
-def cmd_psycho(message):
-    """Команда /psycho — психологический анализ."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text
-    if not reply_text:
-        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
-        return
-    
-    result = analyze_with_gemini(reply_text, 'psycho')
-    bot.reply_to(message, f"🧠 <b>Психоанализ:</b>\n\n{result}")
+def cmd_psycho(message): process_ai_command(message, 'psycho')
 
-@bot.message_handler(func=lambda message: True)
-def echo_all(message):
-    """Обработка остальных сообщений."""
-    bot.reply_to(message, "ℹ️ Используй команды: /start, /help, /summary, /rating, /rateme, /psycho")
+@bot.message_handler(commands=['psychome'])
+def cmd_psychome(message): process_ai_command(message, 'psychome')
+
+@bot.message_handler(commands=['ask'])
+def cmd_ask(message): process_ai_command(message, 'ask')
+
+@bot.message_handler(commands=['poll'])
+def cmd_poll(message): process_ai_command(message, 'poll')
+
+@bot.message_handler(commands=['taro'])
+def cmd_taro(message): process_ai_command(message, 'taro')
+
+@bot.message_handler(commands=['song'])
+def cmd_song(message): process_ai_command(message, 'song')
+
+@bot.message_handler(commands=['edit'])
+def cmd_edit(message): process_ai_command(message, 'edit')
+
+@bot.message_handler(commands=['create'])
+def cmd_create(message): process_ai_command(message, 'create')
+
+@bot.message_handler(commands=['future'])
+def cmd_future(message): process_ai_command(message, 'future')
+
+@bot.message_handler(commands=['meme'])
+def cmd_meme(message): process_ai_command(message, 'meme')
 
 # ============= FLASK РОУТЫ =============
 @app.route('/', methods=['POST'])
