@@ -1,5 +1,4 @@
 import os
-import json
 from flask import Flask, request
 import telebot
 from google import genai
@@ -32,6 +31,9 @@ SYSTEM_PROMPT = """
 
 ОБЩИЕ ПРАВИЛА: Все оценки от 1 до 5. Никакой пощады, будь высокомерным. Если лог пуст, высмей юзера.
 """
+
+def escapeHTML(str_val):
+    return str_val.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 # Обработка /help
 @bot.message_handler(commands=['help'])
@@ -73,18 +75,18 @@ def ask_gemini(command_name, text_context, args=""):
 def handle_analysis_commands(message):
     raw_text = message.text or ""
     
-    # Самый надежный способ вытащить имя команды без вылетов и деления массивов
-    first_word = raw_text.split()[0] if raw_text.split() else ""
-    command_name = first_word.lower().replace('/', '')
+    # Извлекаем первое слово-команду
+    parts = raw_text.split()
+    first_word = parts[0] if parts else ""
     
-    # Очищаем команду, если там приписан юзернейм бота (например, /summary@stat_boyy_bot)
-    if '@' in command_name:
-        command_name = command_name.split('@')[0]
-        
+    # Очищаем от слэша и отрезаем юзернейм бота, если он есть
+    clean_cmd = first_word.lower().replace('/', '')
+    command_name = clean_cmd.split('@')[0]
+    
     if command_name == 'help':
         return
         
-    # Вытаскиваем аргументы
+    # Вытаскиваем аргументы пользователя
     args = raw_text[len(first_word):].strip()
     
     # Реплика / контекст из Reply
@@ -100,7 +102,7 @@ def handle_analysis_commands(message):
     except Exception as e:
         print(f"Ошибка отправки ответа: {e}")
 
-# Роутинг вебхука Vercel
+# Роутинг вебхука Vercel (Flask)
 @app.route('/', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
