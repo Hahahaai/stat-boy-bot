@@ -6,12 +6,11 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// Юзернейм твоего бота для защиты от ложных срабатываний в чатах
+// Твой точный юзернейм из скрина (БЕЗ СОБАКЫ)
 const BOT_USERNAME = 'stat_boyy_bot';
 
-// ПОЛНАЯ ИНСТРУКЦИЯ С ТВОИМИ КОМАНДАМИ ДЛЯ СТАТ БОЯ
 const SYSTEM_PROMPT = `
-Ты — токсичный, циничный ИИ-аналитик чата StatBoy. Отвечай СТРОГО по запрошенным командам. Используй HTML для форматирования (<b>жирный</b>, <i>курсив</i>, <code>код</code>). Без Markdown!
+Ты — токсичный, циничный ИИ-аналитик чата StatBoy. Отвечай СТРОГО по запрошенным командам. Используй HTML для форматирования (<b>жирный</b>, <i>курсив</i>, <code>код</code>). Никогда не используй символы разметки Markdown (звёздочки)!
 
 КОМАНДЫ:
 1. !sb help: список команд.
@@ -19,7 +18,7 @@ const SYSTEM_PROMPT = `
 3. !sb rating: по каждому нику (Вульгарность, Вежливость, Кринж, Токсичность от 1 до 5) и диагноз.
 4. !sb rateme: личный табель (Вульгарность, Токсичность, Интеллект, Вайб от 1 до 5) и приговор.
 5. !sb psycho: психопортрет всех (Архетип, Триггеры, Состояние от 1 до 5) и совет.
-6. !sb psychome: diagnostic-карта автора (Недосып, Зависимость, Стабильность от 1 до 5) и вердикт.
+6. !sb psychome: диагностика автора (Недосып, Зависимость, Стабильность от 1 до 5) и вердикт.
 7. !sb ask [вопрос]: циничный ответ по контексту логов.
 8. !sb poll: опрос (Тема и 4 едких варианта ответа).
 9. !sb taro: расклад (Прошлое, Настоящее, Будущее и вердикт).
@@ -32,10 +31,15 @@ const SYSTEM_PROMPT = `
 ОБЩИЕ ПРАВИЛА: Все оценки от 1 до 5. Никакой пощады, будь высокомерным. Если лог пуст, высмей юзера.
 `;
 
-// 1. СЛУШАТЕЛЬ ОПИСАНИЯ КОМАНД (ДЛЯ /help)
+// Функция безопасного экранирования HTML, чтобы Telegram не отклонял сообщения
+function escapeHTML(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// 1. СЛУШАТЕЛЬ /help
 bot.hears(/^\/help(@[a-zA-Z0-9_]+)?$/i, async (ctx) => {
-  const matches = ctx.match;
-  if (matches[1] && matches[1].toLowerCase() !== `@${BOT_USERNAME}`.toLowerCase()) return;
+  const text = ctx.message.text || '';
+  if (text.includes('@') && !text.toLowerCase().includes(`@${BOT_USERNAME}`.toLowerCase())) return;
 
   const helpText = `
 <b>🤖 StatBoy ИИ. Список команд:</b>
@@ -61,7 +65,7 @@ bot.hears(/^\/help(@[a-zA-Z0-9_]+)?$/i, async (ctx) => {
   }
 });
 
-// 2. ГЛАВНЫЙ ОБРАБОТЧИК ДЛЯ ВСЕХ СООБЩЕНИЙ И КОМАНД ЧАТА
+// 2. ГЛАВНЫЙ ОБРАБОТЧИК
 bot.on('message', async (ctx) => {
   const text = ctx.message.text;
   if (!text) return;
@@ -70,55 +74,56 @@ bot.on('message', async (ctx) => {
   const username = ctx.message.from.username || ctx.message.from.first_name || 'Аноним';
   const kvKey = `chat_history:${chatId}`;
 
-  // Проверяем, является ли сообщение слэш-командой
+  // Обработка слэш-команд
   if (text.startsWith('/')) {
-    const match = text.match(/^\/([a-zA-Z0-9_]+)(@[a-zA-Z0-9_]+)?(.*)/s);
-    
-    if (match) {
-      const commandName = match[1].toLowerCase();
-      const targetBot = match[2];
-      const args = match[3] ? match[3].trim() : '';
+    const parts = text.split(' ');
+    const commandWithBot = parts[0].substring(1); // убираем слэш
+    const args = parts.slice(1).join(' ');
 
-      if (commandName === 'help') return;
+    const cmdParts = commandWithBot.split('@');
+    const commandName = cmdParts[0].toLowerCase();
+    const targetBot = cmdParts[1] ? cmdParts[1].toLowerCase() : null;
 
-      // Если вызван чужой бот — просто пишем эту команду в лог как обычный текст
-      if (targetBot && targetBot.toLowerCase() !== `@${BOT_USERNAME}`.toLowerCase()) {
-        try {
-          await kv.rpush(kvKey, `[${username}]: ${text}`);
-          await kv.ltrim(kvKey, -150, -1);
-        } catch (err) {
-          console.error('Ошибка записи в KV:', err);
-        }
-        return;
-      }
+    if (commandName === 'help') return;
 
-      // Если это наш бот, отправляем контекст в ИИ Gemini
+    // Если вызван чужой бот — пишем в лог как обычный текст
+    if (targetBot && targetBot !== BOT_USERNAME.toLowerCase()) {
       try {
-        await ctx.sendChatAction('typing');
-        const historyArray = await kv.lrange(kvKey, 0, -1);
-        const logContext = historyArray.length > 0 ? historyArray.join('\n') : 'Чат пуст.';
-
-        const cleanCommand = `!sb ${commandName} ${args}`;
-        const prompt = `КОНТЕКСТ ЧАТА:\n${logContext}\n\nКОМАНДА: ${cleanCommand}\n\nВыполни строго по инструкции Стат Боя.`;
-
-        const result = await model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          systemInstruction: SYSTEM_PROMPT,
-        });
-
-        await ctx.reply(result.response.text(), { 
-          reply_to_message_id: ctx.message.message_id,
-          parse_mode: 'HTML'
-        });
-      } catch (e) {
-        console.error('Ошибка ИИ:', e);
-        await ctx.reply('Бот сломался от твоего кринжа. Попробуй позже.');
+        await kv.rpush(kvKey, `[${username}]: ${text}`);
+        await kv.ltrim(kvKey, -150, -1);
+      } catch (err) {
+        console.error('Ошибка записи чужой команды в KV:', err);
       }
       return;
     }
+
+    // Обработка нашей команды через ИИ
+    try {
+      await ctx.sendChatAction('typing');
+      const historyArray = await kv.lrange(kvKey, 0, -1);
+      const logContext = historyArray.length > 0 ? historyArray.join('\n') : 'Чат пуст.';
+
+      const cleanCommand = `!sb ${commandName} ${args}`;
+      const prompt = `КОНТЕКСТ ЧАТА:\n${logContext}\n\nКОМАНДА: ${cleanCommand}\n\nВыполни строго по инструкции Стат Боя.`;
+
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        systemInstruction: SYSTEM_PROMPT,
+      });
+
+      const aiResponse = result.response.text();
+      await ctx.reply(escapeHTML(aiResponse), { 
+        reply_to_message_id: ctx.message.message_id,
+        parse_mode: 'HTML'
+      });
+    } catch (e) {
+      console.error('Ошибка работы ИИ:', e);
+      await ctx.reply('Бот сломался от твоего кринжа. Попробуй позже.');
+    }
+    return;
   }
 
-  // 3. Пассивное логирование (обычные текстовые сообщения без слэша)
+  // 3. Пассивное логирование обычного текста
   try {
     await kv.rpush(kvKey, `[${username}]: ${text}`);
     await kv.ltrim(kvKey, -150, -1);
@@ -127,17 +132,20 @@ bot.on('message', async (ctx) => {
   }
 });
 
-// НАДЁЖНЫЙ И ЦЕЛЬНЫЙ ОБРАБОТЧИК ВЕБХУКА ДЛЯ SERVERLESS VERCEL
+// СВЕРХНАДЁЖНЫЙ ОБРАБОТЧИК ДЛЯ СРЕДЫ VERCEL
 module.exports = async (req, res) => {
   try {
     if (req.method === 'POST') {
       const update = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      await bot.handleUpdate(update, res);
+      
+      // Выполняем логику Telegraf и СРАЗУ закрываем соединение для Vercel
+      await bot.handleUpdate(update);
+      res.status(200).end();
     } else {
-      res.status(200).send('<h1>StatBoy готов к работе через Вебхук и Vercel KV!</h1>');
+      res.status(200).send('<h1>StatBoy успешно работает!</h1>');
     }
   } catch (err) {
-    console.error('Критическая ошибка вебхука:', err);
-    res.status(200).send('Error handled');
+    console.error('Критический сбой вебхука:', err);
+    res.status(200).end(); // Отдаем 200, чтобы не упасть в бесконечную петлю
   }
 };
