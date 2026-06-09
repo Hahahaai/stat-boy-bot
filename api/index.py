@@ -33,9 +33,6 @@ SYSTEM_PROMPT = """
 ОБЩИЕ ПРАВИЛА: Все оценки от 1 до 5. Никакой пощады, будь высокомерным. Если лог пуст, высмей юзера.
 """
 
-def escapeHTML(str_val):
-    return str_val.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
 # Обработка /help
 @bot.message_handler(commands=['help'])
 def send_help(message):
