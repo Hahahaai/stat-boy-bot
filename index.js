@@ -6,11 +6,11 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// Твой точный юзернейм бота (БЕЗ СОБАКЫ)
+// Твой точный юзернейм бота (строго маленькими буквами)
 const BOT_USERNAME = 'stat_boyy_bot';
 
 const SYSTEM_PROMPT = `
-Ты — токсичный, циничный ИИ-аналитик чата StatBoy. Отвечай СТРОГО по запрошенным командам. Используй HTML для форматирования (<b>жирный</b>, <i>курсив</i>, <code>код</code>). Никогда не используй символы разметки Markdown (звёздочки)!
+Ты — toxic, циничный ИИ-аналитик чата StatBoy. Отвечай СТРОГО по запрошенным командам. Используй HTML для форматирования (<b>жирный</b>, <i>курсив</i>, <code>код</code>). Никогда не используй символы разметки Markdown (звёздочки)!
 
 КОМАНДЫ:
 1. !sb help: список команд.
@@ -37,8 +37,8 @@ function escapeHTML(str) {
 
 // 1. СЛУШАТЕЛЬ /help
 bot.hears(/^\/help( @[a-zA-Z0-9_]+)?$/i, async (ctx) => {
-  const text = ctx.message.text || '';
-  if (text.includes('@') && !text.toLowerCase().includes(`@${BOT_USERNAME}`.toLowerCase())) return;
+  const text = (ctx.message.text || '').toLowerCase();
+  if (text.includes('@') && !text.includes(`@${BOT_USERNAME}`)) return;
 
   const helpText = `
 <b>🤖 StatBoy ИИ. Список команд:</b>
@@ -76,25 +76,28 @@ bot.on('message', async (ctx) => {
   // Обработка слэш-команд
   if (text.startsWith('/')) {
     const firstSpaceIndex = text.indexOf(' ');
-    const fullCommand = firstSpaceIndex === -1 ? text.slice(1) : text.slice(1, firstSpaceIndex);
+    let fullCommand = firstSpaceIndex === -1 ? text.slice(1) : text.slice(1, firstSpaceIndex);
     const args = firstSpaceIndex === -1 ? '' : text.slice(firstSpaceIndex + 1);
 
-    const cmdParts = fullCommand.split('@');
-    const commandName = cmdParts[0].toLowerCase();
-    const targetBot = cmdParts[1] ? cmdParts[1].toLowerCase() : null;
+    let commandName = fullCommand.toLowerCase();
+
+    // Проверяем наличие юзернейма в команде (например, /summary@stat_boyy_bot)
+    if (commandName.includes('@')) {
+      // Если команда предназначена НЕ нашему боту — логируем её как обычный текст и выходим
+      if (!commandName.endsWith(`@${BOT_USERNAME}`)) {
+        try {
+          await kv.rpush(kvKey, `[${username}]: ${text}`);
+          await kv.ltrim(kvKey, -150, -1);
+        } catch (err) {
+          console.error('Ошибка записи чужой команды в KV:', err);
+        }
+        return;
+      }
+      // Если нашему — очищаем имя бота, оставляя только чистую команду (например, "summary")
+      commandName = commandName.split('@')[0];
+    }
 
     if (commandName === 'help') return;
-
-    // Если вызван чужой бот — пишем в лог как обычный текст
-    if (targetBot && targetBot !== BOT_USERNAME.toLowerCase()) {
-      try {
-        await kv.rpush(kvKey, `[${username}]: ${text}`);
-        await kv.ltrim(kvKey, -150, -1);
-      } catch (err) {
-        console.error('Ошибка записи чужой команды в KV:', err);
-      }
-      return;
-    }
 
     // Обработка нашей команды через ИИ
     try {
@@ -131,7 +134,7 @@ bot.on('message', async (ctx) => {
   }
 });
 
-// СВЕРХНАДЁЖНЫЙ ОБРАБОТЧИК ДЛЯ СРЕДЫ VERCEL
+// НАДЁЖНЫЙ ОБРАБОТЧИК ДЛЯ СРЕДЫ VERCEL
 module.exports = async (req, res) => {
   try {
     if (req.method === 'POST') {
