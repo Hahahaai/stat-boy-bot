@@ -1,248 +1,144 @@
-Отлично! Вот переделанный код с поддержкой всех команд StatBoy и интеграцией Google Search:
-
-```python
 import os
-import json
 import logging
 from flask import Flask, request, jsonify
 import telebot
 import google.generativeai as genai
-from googlesearch import search
-import random
 
-# ============= ИНИЦИАЛИЗАЦИЯ =============
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
-
-if not TELEGRAM_BOT_TOKEN or not GOOGLE_API_KEY:
-    raise ValueError("Отсутствуют переменные окружения TELEGRAM_BOT_TOKEN или GOOGLE_API_KEY")
-
-app = Flask(__name__)
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode='HTML')
-genai.configure(api_key=GOOGLE_API_KEY)
-
+# Настройка логирования для Vercel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ============= КОНФИГУРАЦИЯ GEMINI =============
-STATBOY_SYSTEM_PROMPT = """Ты — токсичный, циничный и высокомерный ИИ-аналитик чата по имени StatBoy.
-Ты обрабатываешь контекст переписки и отвечаешь в едком, издевательском стиле.
-Используй только HTML-теги для форматирования: <b>жирный</b>, <i>курсив</i>, <code>код</code>.
-Никакого Markdown! Будь жестким, саркастичным, черный юмор приветствуется.
-Если контекст пустой — высмей пользователя за тупость."""
+# Инициализация токенов (имена как у Клода)
+BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 
-def analyze_with_gemini(text: str, command: str, author: str = None) -> str:
-    """Анализирует текст через Gemini в стиле StatBoy."""
+if not BOT_TOKEN or not GOOGLE_API_KEY:
+    raise ValueError("Отсутствуют переменные окружения TELEGRAM_BOT_TOKEN или GOOGLE_API_KEY")
+
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+genai.configure(api_key=GOOGLE_API_KEY)
+
+# Подключаем Gemini и включаем инструмент Google Search (Интернет-поиск)
+model = genai.GenerativeModel(
+    model_name='gemini-1.5-flash',
+    tools=[{"google_search": {}}]
+)
+
+app = Flask(__name__)
+
+# СИСТЕМНЫЙ ПРОМПТ С ШАБЛОНАМИ
+SYSTEM_PROMPT = """
+Ты — токсичный, циничный и высокомерный ИИ-аналитик чата по имени StatBoy. 
+Ты обрабатываешь контекст переписки (логи) и отвечаешь СТРОГО по запрошенным командам, используя заданные шаблоны.
+Выводи ответы с использованием простых HTML-тегов для форматирования: <b>жирный текст</b>, <i>курсив</i>, <code>код команды</code>. Запрещено использовать Markdown (звездочки)!
+
+ПРАВИЛО РЕАЛЬНОСТИ (ИНТЕРНЕТ-ПОИСК):
+При обработке вопросов, треков, мемов или фактов ты обязан использовать данные интернет-поиска (Google Search), чтобы опираться на реальные факты текущего времени. Объединяй данные из интернета с контекстом чата, но подавай это через свой фирменный высокомерный и издевательский стиль.
+
+ПРАВИЛА И ШАБЛОНЫ ВЫВОДА ДЛЯ КОМАНД:
+1. help: Выведи список всех доступных команд ИИ в едкой и высокомерной форме.
+2. summary: Выжимка лога (1. Главная тема дня, 2. Ключевые события и мемы, 3. Градус неадеквата от 1 до 5 с пояснением).
+3. rating: Проанализируй уникальные ники из лога (Вульгарность, Вежливость, Кринж, Токсичность от 1 до 5 с едким пояснением) и выдай диагноз.
+4. rateme: Персональный табель позора автора (Вульгарность, Токсичность, Интеллект, Вайб от 1 до 5) и приговор.
+5. psycho: Психологический разбор каждого участника (Архетип, Скрытые триггеры, Психическое состояние от 1 до 5) и циничный совет.
+6. psychome: Оцени кукуху автора команды (Недосып, Зависимость, Стабильность от 1 до 5) и развернутый вердикт.
+7. ask: Загугли информацию, соедини с контекстом переписки и ответь на вопрос пользователя цинично, используя локальные мемы.
+8. poll: Придумай и выведи опрос (Тема и 4 варианта ответов, жестко стебущих комьюнити).
+9. taro: Расклад карт Таро (Прошлое, Настоящее, Будущее и шанс на успех от 1 до 5). Вердикт Вселенной.
+10. song: Используй поиск в интернете, чтобы найти реальный трек под ситуацию (Исполнитель — Трек, Почему это дерьмо, Реальная строчка из этой песни, Уровень позора от 1 до 5).
+11. edit: Текстуально опиши концепт убойной фотожабы-мема по запросу пользователя. Оцени задумку от 1 до 5.
+12. create: Высмей фантазию автора (оценка от 1 до 5) и сформируй детальный англоязычный промпт для Midjourney.
+13. future: Сценарный прогноз будущих сообщений чата с фейковыми репликами ников в их фирменном стиле.
+14. meme: Шаблон демотиватора (Градус кринжа, Постироничность от 1 до 5, ТЕКСТ СВЕРХУ капсом, ТЕКСТ СНИЗУ как панчлайн).
+
+ОБЩИЕ ПРАВИЛА: Никакой пощады. Общайся высокомерно. Если контекст или лог пустые, жестко высмей пользователя за тупость.
+"""
+
+def ask_gemini(command_name, text_context, args=""):
+    full_prompt = f"{SYSTEM_PROMPT}\n\nКОНТЕКСТ ДЛЯ АНАЛИЗА:\n{text_context}\n\nКОМАНДА: !sb {command_name}\nАРГУМЕНТЫ: {args}\n\nВыполни строго по инструкции."
     try:
-        model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash',
-            system_instruction=STATBOY_SYSTEM_PROMPT
-        )
-        
-        prompts = {
-            'help': 'Выведи список доступных команд StatBoy в едкой форме.',
-            'summary': f'Сделай выжимку по шаблону:\n1. <b>Главная тема</b>: (суть)\n2. <b>Ключевые события</b>: (список)\n3. <b>Градус неадеквата</b>: (1-5)/5\nТекст: {text}',
-            'rating': f'Проанализируй участников по шаблону для каждого ника:\n• Вульгарность: (1-5)/5\n• Вежливость: (1-5)/5\n• Кринж: (1-5)/5\n• Токсичность: (1-5)/5\n🏆 ОБЩАЯ ОЦЕНКА: (1-5)/5\nТекст: {text}',
-            'rateme': f'Оцени автора по шаблону:\n📊 ПЕРСОНАЛЬНЫЙ ТАБЕЛЬ:\n• Вульгарность: (1-5)/5\n• Токсичность: (1-5)/5\n• Интеллект: (1-5)/5\n• Вайб: (1-5)/5\n🏆 ОБЩАЯ ОЦЕНКА: (1-5)/5\nТекст: {text}',
-            'psycho': f'Проведи психоанализ по шаблону:\n<b>Психологический разбор</b>:\n- <b>Доминирующий архетип</b>:\n- <b>Скрытые триггеры</b>:\n- <b>Психическое состояние</b>: (1-5)\n⭐️ ОБЩАЯ ОЦЕНКА: (1-5)/5\nТекст: {text}',
-            'psychome': f'Диагностируй автора:\n📊 ДИАГНОСТИЧЕСКАЯ КАРТА:\n• Уровень недосыпа: (1-5)/5\n• Зависимость от интернет-бреда: (1-5)/5\n• Стабильность кукухи: (1-5)/5\n🧠 ПСИХОЛОГИЧЕСКИЙ ВЕРДИКТ: (развернутый анализ)\n⭐️ ОБЩАЯ ОЦЕНКА: (1-5)/5\nТекст: {text}',
-            'poll': f'Придумай опрос по шаблону:\n<b>Тема опроса</b>: (едкий вопрос)\nВарианты:\n1. (для toxic)\n2. (для анимешников)\n3. (абсурд)\n4. (стеб конкретного участника)\nКонтекст: {text}',
-            'taro': f'Сделай расклад Таро:\n🔮 Расклад для пользователя:\n1. 🃏 (Карта 1) (Прошлое)\n2. 🃏 (Карта 2) (Настоящее)\n3. 🃏 (Карта 3) (Будущее) (1-5)/5\nВердикт Вселенной: (финальная фраза)\nТекст: {text}',
-            'future': f'Прогноз:\n📊 АНАЛИЗ ГОТОВНОСТИ:\n• Уровень адекватности: (1-5)/5\n• Процент выживания извилин: (0-100)%\n🔮 ПРЕДСКАЗАНИЕ СЛЕДУЮЩИХ СООБЩЕНИЙ: (фейковые сообщения в стиле участников)\n🎯 Финальный вердикт: (одно циничное предложение)\nТекст: {text}',
-            'meme': f'Демотиватор:\n📊 ОЦЕНКА:\n• Градус кринжа: (1-5)/5\n• Постироничность: (1-5)/5\n🎨 ШАБЛОН:\n• ТЕКСТ СВЕРХУ: (КАПСОМ)\n• ТЕКСТ СНИЗУ: (панчлайн)\nТекст: {text}'
-        }
-        
-        prompt = prompts.get(command, f'Анализируй в стиле StatBoy: {text}')
-        response = model.generate_content(prompt)
-        
-        return response.text if response.text else "Gemini спит. Попробуй позже."
-    
+        response = model.generate_content(full_prompt)
+        ai_text = response.text or "ИИ вернул пустой ответ."
+        # Безопасное экранирование HTML
+        ai_text = ai_text.replace("<", "&lt;").replace(/>/g, "&gt;")
+        ai_text = ai_text.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
+        ai_text = ai_text.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
+        ai_text = ai_text.replace("&lt;code&gt;", "<code>").replace("&lt;/code&gt;", "</code>")
+        return ai_text
     except Exception as e:
         logger.error(f"Ошибка Gemini: {str(e)}")
-        return f"<b>Ошибка анализа:</b> {str(e)}"
+        return "Бот сломался от твоего кринжа. Попробуй позже."
 
-def search_web(query: str) -> str:
-    """Поиск в интернете для команды /ask."""
-    try:
-        results = list(search(query, num_results=3))
-        return " ".join(results[:3]) if results else "Интернет молчит."
-    except Exception as e:
-        logger.error(f"Ошибка поиска: {str(e)}")
-        return "Google спит."
-
-def generate_song_analysis(context: str) -> str:
-    """Генерирует анализ трека для /song."""
-    songs = [
-        ("The Weeknd", "Blinding Lights", "I can't sleep until I feel your touch"),
-        ("Billie Eilish", "Bad Guy", "So you think you're tough? I'm the baddest"),
-        ("Eminem", "Lose Yourself", "You only get one shot, do not miss your chance"),
-        ("Tyler, The Creator", "EARFQUAKE", "Do you love me or nah?"),
-        ("Playboi Carti", "Magnolia", "Everything I do be legendary"),
-    ]
-    
-    artist, track, lyric = random.choice(songs)
-    return f"🎵 <b>{artist}</b> — <b>{track}</b>\n\n• <b>Почему это дерьмо</b>: Идеально описывает твою дегенерацию.\n• <b>Строчка из трека</b>: <i>«{lyric}»</i>\n⭐️ УРОВЕНЬ МУЗЫКАЛЬНОГО ПОЗОРА: 5/5"
-
-# ============= ОБРАБОТЧИКИ КОМАНД =============
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    """Приветствие StatBoy."""
-    text = (
-        "🤖 <b>Привет, дегенерат!</b>\n\n"
-        "Я <b>StatBoy</b> — токсичный аналитик твоего чата.\n\n"
-        "<b>Команды:</b>\n"
-        "/help — Список команд\n"
-        "/summary — Выжимка лога\n"
-        "/rating — Рейтинг участников\n"
-        "/rateme — Оценка твоих сообщений\n"
-        "/psycho — Психоанализ чата\n"
-        "/psychome — Твоя кукуха\n"
-        "/ask [вопрос] — Загугли и ответь\n"
-        "/poll — Опрос\n"
-        "/taro — Расклад Таро\n"
-        "/song — Твой саундтрек\n"
-        "/future — Прогноз\n"
-        "/meme — Демотиватор\n\n"
-        "<i>Используй как reply на сообщение (где требуется)!</i>"
-    )
-    bot.reply_to(message, text)
-
-@bot.message_handler(commands=['help'])
+# 1. ОБРАБОТЧИК /help И /start — ТЕПЕРЬ СВОБОДНО РАБОТАЮТ БЕЗ REPLY
+@bot.message_handler(commands=['help', 'start'])
 def cmd_help(message):
-    """Команда /help."""
-    if message.reply_to_message:
-        reply_text = message.reply_to_message.text or "пусто"
-        result = analyze_with_gemini(reply_text, 'help')
-    else:
-        result = analyze_with_gemini("", 'help')
-    
-    bot.reply_to(message, f"📋 <b>StatBoy Commands:</b>\n\n{result}")
+    help_text = (
+        "<b>🤖 StatBoy ИИ на связи. Список команд для кожаных мешков:</b>\n\n"
+        "• <code>/help</code> — Вызов этого меню\n"
+        "• <code>/summary</code> — Показать выжимку бреда (Нужен Reply)\n"
+        "• <code>/rating</code> — Персональные диагнозы чату (Нужен Reply)\n"
+        "• <code>/rateme</code> — Твой личный табель позора\n"
+        "• <code>/psycho</code> — Психопортрет всех активных участников (Нужен Reply)\n"
+        "• <code>/psychome</code> — Твоя личная карта кукухи\n"
+        "• <code>/ask [вопрос]</code> — Вопрос ИИ по контексту логов (Нужен Reply)\n"
+        "• <code>/poll</code> — Создать токсичный опрос на основе логов (Нужен Reply)\n"
+        "• <code>/taro</code> — Расклад карт Таро на деградацию\n"
+        "• <code>/song</code> — Саундтрек твоей нищей жизни\n"
+        "• <code>/edit [запрос]</code> — Концепт оскорбительной фотожабы\n"
+        "• <code>/create [запрос]</code> — Сгенерировать промпт для нейросети\n"
+        "• <code>/future</code> — Сценарное предсказание будущих сообщений чата\n"
+        "• <code>/meme</code> — Создать шаблон демотиватора\n\n"
+        "<i>Для анализа переписки отправляй ИИ-команды ответом (Reply) на длинный лог чата!</i>"
+    )
+    try:
+        bot.reply_to(message, help_text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка help: {str(e)}")
 
-@bot.message_handler(commands=['summary'])
-def cmd_summary(message):
-    """Команда /summary."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение/лог этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = analyze_with_gemini(reply_text, 'summary')
-    bot.reply_to(message, f"📌 <b>Выжимка лога:</b>\n\n{result}")
+# 2. УНИВЕРСАЛЬНЫЙ КОМПАКТНЫЙ ОБРАБОТЧИК ДЛЯ ВСЕХ 13 ОСТАВШИХСЯ ИИ-КОМАНД
+@bot.message_handler(commands=['summary', 'rating', 'rateme', 'psycho', 'psychome', 'ask', 'poll', 'taro', 'song', 'edit', 'create', 'future', 'meme'])
+def handle_all_ai_commands(message):
+    try:
+        raw_text = message.text or ""
+        # Извлекаем чистое имя команды (удаляем слэш и юзернейм бота)
+        first_word = raw_text.split()[0] if raw_text.split() else ""
+        command_name = first_word.replace('/', '').split('@')[0].lower()
+        
+        # Извлекаем аргументы после команды
+        args = raw_text[len(first_word):].strip()
+        
+        # Берем контекст: из Reply (если есть), либо аргументы
+        if message.reply_to_message and message.reply_to_message.text:
+            context_text = message.reply_to_message.text
+        else:
+            context_text = args if args else "Контекст пустой. Логов нет."
 
-@bot.message_handler(commands=['rating'])
-def cmd_rating(message):
-    """Команда /rating."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = analyze_with_gemini(reply_text, 'rating')
-    bot.reply_to(message, f"⭐️ <b>Рейтинг участников:</b>\n\n{result}")
+        bot.send_chat_action(message.chat.id, 'typing')
+        answer = ask_gemini(command_name, context_text, args)
+        bot.reply_to(message, answer, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка выполнения {command_name}: {str(e)}")
+        bot.reply_to(message, "Ошибка генерации ИИ.")
 
-@bot.message_handler(commands=['rateme'])
-def cmd_rateme(message):
-    """Команда /rateme."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = analyze_with_gemini(reply_text, 'rateme')
-    bot.reply_to(message, f"🎯 <b>Табель о статусе:</b>\n\n{result}")
+# ==================== FLASK РОУТЫ ДЛЯ ВЕБХУКА VERCEL ====================
+@app.route('/', methods=['POST'])
+def webhook():
+    try:
+        json_data = request.get_json()
+        update = telebot.types.Update.de_json(json_data)
+        bot.process_new_updates([update])
+        return jsonify({'status': 'ok'}), 200
+    except Exception as e:
+        logger.error(f"Ошибка вебхука: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@bot.message_handler(commands=['psycho'])
-def cmd_psycho(message):
-    """Команда /psycho."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = analyze_with_gemini(reply_text, 'psycho')
-    bot.reply_to(message, f"🧠 <b>Психоанализ:</b>\n\n{result}")
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status': 'alive'}), 200
 
-@bot.message_handler(commands=['psychome'])
-def cmd_psychome(message):
-    """Команда /psychome."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = analyze_with_gemini(reply_text, 'psychome')
-    bot.reply_to(message, f"🧠 <b>Диагностика:</b>\n\n{result}")
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({'message': 'Telegram Bot API is running'}), 200
 
-@bot.message_handler(commands=['ask'])
-def cmd_ask(message):
-    """Команда /ask [вопрос]."""
-    args = message.text.split(' ', 1)
-    if len(args) < 2:
-        bot.reply_to(message, "❌ Использование: /ask [ваш вопрос]")
-        return
-    
-    query = args[1]
-    web_results = search_web(query)
-    result = analyze_with_gemini(f"Вопрос: {query}\nРезультаты: {web_results}", 'ask')
-    bot.reply_to(message, f"🔍 <b>StatBoy отвечает:</b>\n\n{result}")
-
-@bot.message_handler(commands=['poll'])
-def cmd_poll(message):
-    """Команда /poll."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = analyze_with_gemini(reply_text, 'poll')
-    bot.reply_to(message, f"📊 <b>Опрос:</b>\n\n{result}")
-
-@bot.message_handler(commands=['taro'])
-def cmd_taro(message):
-    """Команда /taro."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = analyze_with_gemini(reply_text, 'taro')
-    bot.reply_to(message, f"🔮 <b>Расклад Таро:</b>\n\n{result}")
-
-@bot.message_handler(commands=['song'])
-def cmd_song(message):
-    """Команда /song."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = generate_song_analysis(reply_text)
-    bot.reply_to(message, result)
-
-@bot.message_handler(commands=['future'])
-def cmd_future(message):
-    """Команда /future."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = analyze_with_gemini(reply_text, 'future')
-    bot.reply_to(message, f"🔮 <b>Прогноз:</b>\n\n{result}")
-
-@bot.message_handler(commands=['meme'])
-def cmd_meme(message):
-    """Команда /meme."""
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
-        return
-    
-    reply_text = message.reply_to_message.text or "пусто"
-    result = analyze_with_gemini(reply_text, 'meme')
-    bot.reply_to(message, f"🎨 <b>Демотиватор:</b>\n\n{result}")
-
-@bot.message_handler(func=lambda message: True)
-def echo_all(message):
-    """Обработка остальных сообщений."""
-    text = (
-        "
+if __name__ == '__main__':
+    app.run(debug=False)
