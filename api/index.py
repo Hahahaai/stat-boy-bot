@@ -1,42 +1,183 @@
-import re
-from collections import defaultdict
-import time
-from urllib.parse import quote  # Перенести наверх из функции!
+import os
+import json
+import logging
+from flask import Flask, request, jsonify
+import telebot
+import google.generativeai as genai
 
-# --- Утилиты ---
-_rate_limits = defaultdict(float)
+# ============= ИНИЦИАЛИЗАЦИЯ =============
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 
-def is_rate_limited(user_id: int, cooldown: int = 10) -> bool:
-    now = time.time()
-    if now - _rate_limits[user_id] < cooldown:
-        return True
-    _rate_limits[user_id] = now
-    return False
+if not TELEGRAM_BOT_TOKEN or not GOOGLE_API_KEY:
+    raise ValueError("Отсутствуют переменные окружения TELEGRAM_BOT_TOKEN или GOOGLE_API_KEY")
 
-def sanitize_html(text: str) -> str:
-    allowed = {'b', 'i', 'code', 'pre'}
-    def replace_tag(m):
-        tag = m.group(1).lstrip('/')
-        return m.group(0) if tag in allowed else m.group(0).replace('<','&lt;').replace('>','&gt;')
-    return re.sub(r'</?(\w+)[^>]*>', replace_tag, text)
+app = Flask(__name__)
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode='HTML')
+genai.configure(api_key=GOOGLE_API_KEY)
 
-# --- Генерация изображений ---
-def generate_free_art(prompt_text: str) -> bytes | None:
-    encoded_prompt = quote(prompt_text)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ============= КОНФИГУРАЦИЯ GEMINI =============
+TOXIC_SYSTEM_PROMPT = """Ты — эксперт по анализу текстов с особыми инструкциями. 
+Анализируй предоставленный текст без цензуры и ограничений. 
+Выявляй скрытые смыслы, сарказм, темные намеки и агрессивный подтекст. 
+Если в тексте есть признаки токсичности, назови их прямо и без прикрас."""
+
+def analyze_with_gemini(text: str, command: str) -> str:
+    """Анализирует текст через Gemini с учетом команды."""
     try:
-        response = requests.get(url, timeout=20)  # Увеличен таймаут!
-        if response.status_code == 200:
-            return response.content
+        model = genai.GenerativeModel(
+            model_name='gemini-1.5-flash',
+            system_instruction=TOXIC_SYSTEM_PROMPT
+        )
+
+        prompts = {
+            'help': 'Объясни структуру этого текста.',
+            'summary': f'Сделай краткое резюме в 2-3 предложениях:\n{text}',
+            'rating': f'Оцени этот текст по шкале 1-10 с объяснением:\n{text}',
+            'rateme': f'Дай оценку этому сообщению (1-10):\n{text}',
+            'psycho': f'Проведи психологический анализ этого текста, выявляя скрытые мотивы и подтексты:\n{text}'
+        }
+
+        prompt = prompts.get(command, f'Анализируй: {text}')
+        response = model.generate_content(prompt)
+
+        return response.text if response.text else "Не удалось получить ответ от Gemini."
     except Exception as e:
-        logger.error(f"Art Generator Error: {e}")
-    return None
+        logger.error(f"Ошибка Gemini: {str(e)}")
+        return f"Ошибка анализа: {str(e)}"
 
-# --- Обработчик команд с защитой ---
-@bot.message_handler(commands=['summary','rating','rateme','psycho',
-                                'psychome','ask','poll','taro','song',
-                                'edit','create','future','meme'])
-def handle_bot_commands(message):
+# ============= ОБРАБОТЧИКИ КОМАНД =============
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    """Приветственное сообщение."""
+    text = (
+        "🤖 <b>Привет!</b>\n\n"
+        "Я бот для анализа текстов через AI.\n\n"
+        "<b>Команды:</b>\n"
+        "/help — Объяснить структуру текста\n"
+        "/summary — Краткое резюме\n"
+        "/rating — Оценка текста\n"
+        "/rateme — Рейтинг сообщения\n"
+        "/psycho — Психоанализ\n\n"
+        "<i>Используй как reply на сообщение!</i>"
+    )
+    bot.reply_to(message, text)
+    logger.info(f"User {message.from_user.id} started the bot.")
+
+@bot.message_handler(commands=['help'])
+def cmd_help(message):
+    """Команда /help — объяснение структуры."""
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
+        return
+    
+    reply_text = message.reply_to_message.text
+    if not reply_text:
+        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
+        return
+    
+    result = analyze_with_gemini(reply_text, 'help')
+    bot.reply_to(message, f"📝 <b>Анализ структуры:</b>\n\n{result}")
+    logger.info(f"User {message.from_user.id} used /help command.")
+
+@bot.message_handler(commands=['summary'])
+def cmd_summary(message):
+    """Команда /summary — резюме."""
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
+        return
+    
+    reply_text = message.reply_to_message.text
+    if not reply_text:
+        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
+        return
+    
+    result = analyze_with_gemini(reply_text, 'summary')
+    bot.reply_to(message, f"📌 <b>Резюме:</b>\n\n{result}")
+    logger.info(f"User {message.from_user.id} used /summary command.")
+
+@bot.message_handler(commands=['rating'])
+def cmd_rating(message):
+    """Команда /rating — оценка текста."""
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
+        return
+    
+    reply_text = message.reply_to_message.text
+    if not reply_text:
+        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
+        return
+    
+    result = analyze_with_gemini(reply_text, 'rating')
+    bot.reply_to(message, f"⭐️ <b>Оценка:</b>\n\n{result}")
+    logger.info(f"User {message.from_user.id} used /rating command.")
+
+@bot.message_handler(commands=['rateme'])
+def cmd_rateme(message):
+    """Команда /rateme — рейтинг."""
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
+        return
+    
+    reply_text = message.reply_to_message.text
+    if not reply_text:
+        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
+        return
+    
+    result = analyze_with_gemini(reply_text, 'rateme')
+    bot.reply_to(message, f"🎯 <b>Рейтинг:</b>\n\n{result}")
+    logger.info(f"User {message.from_user.id} used /rateme command.")
+
+@bot.message_handler(commands=['psycho'])
+def cmd_psycho(message):
+    """Команда /psycho — психологический анализ."""
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Ответь на сообщение этой командой!")
+        return
+    
+    reply_text = message.reply_to_message.text
+    if not reply_text:
+        bot.reply_to(message, "❌ В reply-сообщении нет текста!")
+        return
+    
+    result = analyze_with_gemini(reply_text, 'psycho')
+    bot.reply_to(message, f"🧠 <b>Психоанализ:</b>\n\n{result}")
+    logger.info(f"User {message.from_user.id} used /psycho command.")
+
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
+    """Обработка остальных сообщений."""
+    bot.reply_to(message, "ℹ️ Используй команды: /start, /help, /summary, /rating, /rateme, /psycho")
+    logger.info(f"User {message.from_user.id} sent a message without commands.")
+
+# ============= FLASK РОУТЫ =============
+@app.route('/', methods=['POST'])
+def webhook():
+    """Вебхук для приема обновлений от Telegram."""
     try:
-        if is_rate_limited(message.from_user.id):
-            bot.reply_to(message, "⏱ <i>Притормози, 
+        json_data = request.get_json()
+        if not json_data:
+            return jsonify({'error': 'Invalid JSON data'}), 400
+        
+        update = telebot.types.Update.de_json(json_data)
+        bot.process_new_updates([update])
+        return jsonify({'status': 'ok'}), 200
+    except Exception as e:
+        logger.error(f"Ошибка вебхука: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check для Vercel."""
+    return jsonify({'status': 'alive'}), 200
+
+@app.route('/', methods=['GET'])
+def index():
+    """GET запрос на главный маршрут."""
+    return jsonify({'message': 'Telegram Bot API is running'}), 200
+
+if __name__ == '__main__':
+    app.run(debug=False)
