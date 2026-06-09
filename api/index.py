@@ -33,6 +33,9 @@ SYSTEM_PROMPT = """
 ОБЩИЕ ПРАВИЛА: Все оценки от 1 до 5. Никакой пощады, будь высокомерным. Если лог пуст, высмей юзера.
 """
 
+def escapeHTML(str_val):
+    return str_val.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 # Обработка /help
 @bot.message_handler(commands=['help'])
 def send_help(message):
@@ -43,7 +46,10 @@ def send_help(message):
         "• <code>/rating</code> — Диагнозы участникам из Reply\n"
         "• <code>/rateme</code> — Твой личный табель позора"
     )
-    bot.reply_to(message, help_text, parse_mode="HTML")
+    try:
+        bot.reply_to(message, help_text, parse_mode="HTML")
+    except Exception as e:
+        print(f"Ошибка help: {e}")
 
 # Универсальный вызов ИИ
 def ask_gemini(command_name, text_context, args=""):
@@ -75,7 +81,10 @@ def handle_analysis_commands(message):
     
     # Чистим команду от слэша и юзернейма бота
     clean_cmd = first_word.lower().replace('/', '')
-    command_name = clean_cmd.split('@')[0] if '@' in clean_cmd else clean_cmd
+    command_name = clean_cmd.partition('@')[0]
+    
+    if command_name == 'help':
+        return
     
     # Реплика / контекст из Reply
     if message.reply_to_message and message.reply_to_message.text:
@@ -83,9 +92,12 @@ def handle_analysis_commands(message):
     else:
         context = raw_text
 
-    bot.send_chat_action(message.chat.id, 'typing')
-    answer = ask_gemini(command_name, context, args.strip())
-    bot.reply_to(message, answer, parse_mode="HTML")
+    try:
+        bot.send_chat_action(message.chat.id, 'typing')
+        answer = ask_gemini(command_name, context, args.strip())
+        bot.reply_to(message, answer, parse_mode="HTML")
+    except Exception as e:
+        print(f"Ошибка отправки ответа: {e}")
 
 # Роутинг вебхука Vercel
 @app.route('/', methods=['POST'])
