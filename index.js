@@ -6,7 +6,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// Твой точный юзернейм из скрина (БЕЗ СОБАКЫ)
+// Твой точный юзернейм (БЕЗ СОБАКЫ)
 const BOT_USERNAME = 'stat_boyy_bot';
 
 const SYSTEM_PROMPT = `
@@ -31,7 +31,6 @@ const SYSTEM_PROMPT = `
 ОБЩИЕ ПРАВИЛА: Все оценки от 1 до 5. Никакой пощады, будь высокомерным. Если лог пуст, высмей юзера.
 `;
 
-// Функция безопасного экранирования HTML, чтобы Telegram не отклонял сообщения
 function escapeHTML(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -77,7 +76,7 @@ bot.on('message', async (ctx) => {
   // Обработка слэш-команд
   if (text.startsWith('/')) {
     const parts = text.split(' ');
-    const commandWithBot = parts[0].substring(1); // убираем слэш
+    const commandWithBot = parts[0].substring(1); // Безопасное извлечение без слэша
     const args = parts.slice(1).join(' ');
 
     const cmdParts = commandWithBot.split('@');
@@ -137,8 +136,6 @@ module.exports = async (req, res) => {
   try {
     if (req.method === 'POST') {
       const update = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      
-      // Выполняем логику Telegraf и СРАЗУ закрываем соединение для Vercel
       await bot.handleUpdate(update);
       res.status(200).end();
     } else {
@@ -146,6 +143,6 @@ module.exports = async (req, res) => {
     }
   } catch (err) {
     console.error('Критический сбой вебхука:', err);
-    res.status(200).end(); // Отдаем 200, чтобы не упасть в бесконечную петлю
+    res.status(200).end();
   }
 };
