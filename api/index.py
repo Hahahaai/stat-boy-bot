@@ -73,15 +73,19 @@ def ask_gemini(command_name, text_context, args=""):
 def handle_analysis_commands(message):
     raw_text = message.text or ""
     
-    # Безопасное разделение на первое слово и остальной текст через partition
-    first_word, _, args = raw_text.partition(' ')
+    # Самый надежный способ вытащить имя команды без вылетов и деления массивов
+    first_word = raw_text.split()[0] if raw_text.split() else ""
+    command_name = first_word.lower().replace('/', '')
     
-    # Чистим команду от слэша и юзернейма бота
-    clean_cmd = first_word.lower().replace('/', '')
-    command_name = clean_cmd.partition('@')[0]
-    
+    # Очищаем команду, если там приписан юзернейм бота (например, /summary@stat_boyy_bot)
+    if '@' in command_name:
+        command_name = command_name.split('@')[0]
+        
     if command_name == 'help':
         return
+        
+    # Вытаскиваем аргументы
+    args = raw_text[len(first_word):].strip()
     
     # Реплика / контекст из Reply
     if message.reply_to_message and message.reply_to_message.text:
@@ -91,7 +95,7 @@ def handle_analysis_commands(message):
 
     try:
         bot.send_chat_action(message.chat.id, 'typing')
-        answer = ask_gemini(command_name, context, args.strip())
+        answer = ask_gemini(command_name, context, args)
         bot.reply_to(message, answer, parse_mode="HTML")
     except Exception as e:
         print(f"Ошибка отправки ответа: {e}")
