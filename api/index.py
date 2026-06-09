@@ -48,7 +48,7 @@ def send_help(message):
 # Универсальный вызов ИИ
 def ask_gemini(command_name, text_context, args=""):
     clean_command = f"!sb {command_name} {args}"
-    prompt = f"КОНТЕКСТ ДЛЯ АНАЛИЗА:\n{text_context}\n\nКОМАНДА: ${clean_command}\n\nВыполни строго по инструкции."
+    prompt = f"КОНТЕКСТ ДЛЯ АНАЛИЗА:\n{text_context}\n\nКОМАНДА: {clean_command}\n\nВыполни строго по инструкции."
     
     try:
         response = ai_client.models.generate_content(
@@ -68,19 +68,23 @@ def ask_gemini(command_name, text_context, args=""):
 # Обработка команд анализа через Reply
 @bot.message_handler(commands=['summary', 'rating', 'rateme', 'psycho', 'psychome', 'ask', 'poll', 'taro', 'song', 'edit', 'create', 'future', 'meme'])
 def handle_analysis_commands(message):
-    # Безопасное извлечение чистой команды без слэша и юзернейма бота
     raw_text = message.text or ""
-    first_word = raw_text.split()[0].lower() if raw_text.split() else ""
-    command_name = first_word.replace('/', '').split('@')[0]
+    words = raw_text.split()
     
-    # Извлекаем аргументы (всё, что идет после самой команды)
-    args = raw_text[len(first_word):].strip()
+    # Безопасное извлечение имени команды без вылетов
+    if words:
+        first_word = words[0].lower()
+        command_name = first_word.replace('/', '').split('@')[0]
+        args = raw_text[len(words[0]):].strip()
+    else:
+        command_name = "summary"
+        args = ""
     
-    # Берем текст из сообщения, на которое ответили (Reply)
+    # Реплика / контекст из Reply
     if message.reply_to_message and message.reply_to_message.text:
         context = message.reply_to_message.text
     else:
-        context = raw_text  # Если реплая нет, берем сам текст сообщения
+        context = raw_text
 
     bot.send_chat_action(message.chat.id, 'typing')
     answer = ask_gemini(command_name, context, args)
