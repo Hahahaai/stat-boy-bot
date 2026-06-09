@@ -22,7 +22,7 @@ const SYSTEM_PROMPT = `
 7. !sb ask [вопрос]: циничный ответ по контексту логов.
 8. !sb poll: опрос (Тема и 4 едких варианта ответа).
 9. !sb taro: расклад (Прошлое, Настоящее, Будущее и вердикт).
-10. !sb song: саундтрек жизни (Исполнитель, Трек, Пояснение, Строчка, Уровень позора от 1 до 5).
+10. !sb song: saундтрек жизни (Исполнитель, Трек, Пояснение, Строчка, Уровень позора от 1 до 5).
 11. !sb edit: концепт фотожабы и оценка идеи от 1 до 5.
 12. !sb create: едкий коммент и детализированный англоязычный промпт для Midjourney.
 13. !sb future: прогноз будущих сообщений (Уровень адекватности, Сценарный прогноз с репликамиников).
@@ -75,11 +75,12 @@ bot.on('message', async (ctx) => {
 
   // Обработка слэш-команд
   if (text.startsWith('/')) {
-    const parts = text.split(' ');
-    const commandWithBot = parts[0].substring(1); // Безопасное извлечение без слэша
-    const args = parts.slice(1).join(' ');
+    // Безопасный разбор строки без использования ломающихся методов массивов
+    const firstSpaceIndex = text.indexOf(' ');
+    const fullCommand = firstSpaceIndex === -1 ? text.slice(1) : text.slice(1, firstSpaceIndex);
+    const args = firstSpaceIndex === -1 ? '' : text.slice(firstSpaceIndex + 1);
 
-    const cmdParts = commandWithBot.split('@');
+    const cmdParts = fullCommand.split('@');
     const commandName = cmdParts[0].toLowerCase();
     const targetBot = cmdParts[1] ? cmdParts[1].toLowerCase() : null;
 
