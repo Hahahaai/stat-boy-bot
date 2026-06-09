@@ -70,7 +70,7 @@ TOXIC_SYSTEM_PROMPT = """Ты — юморной, саркастичный и п
 Отвечай СТРОГО по запрошенным командам, используя заданные шаблоны. Если тебя вызывают в свободном режиме диалога, отвечай одной-двумя едкими, но разрывными фразами.
 Выводи ответы с использованием простых HTML-тегов для форматирования: <b>жирный текст</b>, <i>курсив</i>, <code>код команды</code>. Запрещено использовать разметку Markdown (звездочки)!"""
 
-def analyze_with_gemini(text_context: str, command: str) -> str:
+def analyze_with_gemini(text_context: str, command: str, user_args: str = "") -> str:
     try:
         prompts = {
             'help': 'Просто выведи оригинальный список команд в своей фирменной угарной манере.',
@@ -79,13 +79,13 @@ def analyze_with_gemini(text_context: str, command: str) -> str:
             'rateme': f'Оцени автора по его поведению в логах по шаблону:\n📊 ПЕРСОНАЛЬНЫЙ ТАБЕЛЬ О СТАТУСЕ:\n• Вульгарность: [Х]/5\n• Токсичность: [Х]/5\n• Интеллект: [Х]/5\n• Вайб: [Сигма/Омежка/Дотер].\n🏆 ОБЩАЯ ОЦЕНКА: [Х] из 5. Диагноз: [Приговор].\n\nЛог чата:\n{text_context}',
             'psycho': f'Проведи психологический анализ участников по шаблону:\n<b>Психологический разбор [Ник]</b>:\n- <b>Доминирующий архетип</b>: [Архетип]\n- <b>Скрытые триггеры</b>: [Триггеры]\n- <b>Психическое состояние</b>: [Х]/5\n⭐️ ОБЩАЯ ОЦЕНКА ПСИХИКИ: [Х] из 5. Рекомендация: [Совет].\n\nЛог:\n{text_context}',
             'psychome': f'Оцени кукуху автора по шаблону:\n📊 ДИАГНОСТИЧЕСКАЯ КАРТА: Недосып [Х]/5, Зависимость [Х]/5, Стабильность [Х]/5.\n🧠 ПСИХОЛОГИЧЕСКИЙ ВЕРДИКТ: [Вердикт].\n⭐️ ОБЩАЯ ОЦЕНКА: [Х] из 5.\n\nЛог:\n{text_context}',
-            'ask': f'Ответь на вопрос пользователя саркастично, используя локальные мемы на основе лога чата:\n{text_context}',
+            'ask': f'Пользователь задал вопрос: "{user_args}". Ответь на него максимально саркастично и угарно, основываясь на этом контексте логов чата:\n{text_context}',
             'poll': f'Придумай опрос с 4 смешными вариантами ответов на основе текущего чата:\n{text_context}',
-            'taro': f'Сделай угарный расклад карт Таро (Прошлое, Настоящее, Будущее и шанс на успех от 1 до 5). Вердикт Вселенной для автора сообщения на основе чата:\n{text_context}',
+            'taro': f'Сделай угарный расклад карт Таро (Прошлое, Настоящее, Будущее). Вердикт Вселенной для автора сообщения на основе чата:\n{text_context}',
             'song': f'Найди реальный трек под ситуацию и выведи музыкальный позор по шаблону:\n🎵 Саундтрек твоей жизни от Stat Boy: [Исполнитель] — [Название трека]\n• <b>Почему именно это дерьмо</b>: (Пояснение).\n• <b>Строчка из трека, которая тебя описывает</b>: (Строчка из песни).\n⭐️ УРОВЕНЬ МУЗЫКАЛЬНОГО ПОЗОРА: [Х] из 5.\n\nЛог:\n{text_context}',
             'edit': f'Опиши концепт убойной фотожабы-мема по запросу пользователя. Оцени задумку от 1 до 5. Запрос:\n{text_context}',
             'create': f'Высмей фантазию автора за его убогий запрос картинки. Выстави оценку креативности от 1 до 5. Шаблон вывода:\n🎨 Мысли Stat Boy о твоем убогом запросе: [Твой едкий комментарий]\n⭐️ ОЦЕНКА КРЕАТИВНОСТИ: [Х] из 5.\n\nЗапрос автора:\n{text_context}',
-            'future': f'Сделай сценарный прогноз будущих сообщений чата по шаблону:\n📊 АНАЛИЗ ГОТОВНОСТИ К БУДУЩЕМУ:\n• Уровень адекватности чата: [Х]/5\n• Процент выживания извилин: [Х]%\n🔮 ПРЕДСКАЗАНИЕ СЛЕДУЮЩИХ СООБЩЕНИЙ:\n[Ник 1]: (Фейковая реплика)\n[Ник 2]: (Фейковый ответ)\n🎯 Финальный вердикт: [Прогноз].\n\nЛог:\n{text_context}',
+            'future': f'Сделай сценарный прогноз будущих сообщений чата по шаблону:\n📊 АНАЛИЗ ГОТОВНОСТИ К БУДУЩЕМУ:\n• Уровень адекватности чата: [Х]/5\n• Процент выживания извилин: [Х]%\n🔮 ПРЕДСКАЗАНИЕ СЛЕДУЮЩИХ СООБЩЕНИЙ:\n[Ник 1]: (Фейковая реплика)\n[Ник 2]: (Фейковый ответ)\n🎯 Финальный вердикт: [Прогноз].\n\nТекст:\n{text_context}',
             'meme': f'Выдай шаблон демотиватора по шаблону:\n📊 ОЦЕНКА МЕДИА-МАТЕРИАЛА:\n• Градус кринжа: [Х]/5\n• Постироничность: [Х]/5\n🎨 ШАБЛОН ДЛЯ МЕМФИКАЦИИ:\n• ТЕКСТ СВЕРХУ (Top Text): [Текст капсом]\n• ТЕКСТ СНИЗУ (Bottom Text): [Панчлайн].\n\nКонтекст:\n{text_context}'
         }
         prompt = prompts.get(command, f'Ответь в режиме диалога на последнее сообщение пользователя: {text_context}')
@@ -108,25 +108,23 @@ def process_ai_command(message, command_name):
     chat_id = message.chat.id
     kv_key = f"chat_history:{chat_id}"
     
+    # КРИСТАЛЬНО БЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ АРГУМЕНТОВ БЕЗ ИНДЕКСОВ СПИСКОВ
     raw_text = message.text or ""
     parts = raw_text.split(maxsplit=1)
     args = parts[1].strip() if len(parts) > 1 else ""
 
-    # СТАТУС БЕЗ ВЫПЕНДРЕЖА: Коротко и ясно
+    # МГНОВЕННЫЙ СТАТУС: Бот железно пришлет его в первую миллисекунду
     status_msg = bot.reply_to(message, "⏳ <i>Подожди...</i>")
 
     try:
         bot.send_chat_action(chat_id, 'typing')
         
-        # Подгружаем историю из Redis
+        # Тянем историю из облачного Redis
         history_array = kv.lrange(kv_key, 0, -1)
         context_text = "\n".join(history_array) if history_array else "Чат пуст."
 
-        # Если команда /dialog — это просто запуск, обрабатываем её как текстовый запрос
-        if command_name == 'dialog' and args:
-            context_text = f"Последний запрос пользователя: {args}\n\nИстория чата:\n{context_text}"
-
-        answer = analyze_with_gemini(context_text, command_name)
+        # Вызываем Gemini
+        answer = analyze_with_gemini(context_text, command_name, args)
         
         clean_answer = answer.replace("<", "&lt;").replace(">", "&gt;")
         clean_answer = clean_answer.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
@@ -143,8 +141,9 @@ def process_ai_command(message, command_name):
                 bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text=f"{clean_answer}\n\n❌ Ошибка генератора.")
         else:
             bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text=clean_answer, parse_mode='HTML')
-    except Exception:
-        try: bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="❌ Ошибка ИИ.")
+    except Exception as e:
+        logger.error(f"Критический сбой выполнения {command_name}: {str(e)}")
+        try: bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="❌ Ошибка генерации ИИ.")
         except Exception: pass
 
 # Обработчик /help и /start
@@ -157,6 +156,7 @@ def cmd_help(message):
         "• <code>/summary</code> — Выжимка бреда чата (из базы данных)\n"
         "• <code>/rating</code> — Шкала кринжа и диагнозы участникам\n"
         "• <code>/rateme</code> — Твой личный табель позора\n"
+        "• <code>/ask [твой вопрос]</code> — Задать вопрос по контексту логов чата\n"
         "• <code>/create [запрос]</code> — Бесплатная генерация картинок\n"
         "• <code>/taro</code> / <code>/song</code> — Расклад Таро или Саундтрек жизни"
     )
@@ -177,13 +177,15 @@ def cmd_stop_toggle(message):
     kv.set(f"dialog_mode:{chat_id}", "off")
     bot.reply_to(message, "🤐 <b>Режим Диалога выключен.</b> Ухожу в режим скрытого наблюдения. Буду отвечать только на команды.")
 
-# Обработка остальных 13 команд
+# НАДЕЖНАЯ РЕГИСТРАЦИЯ КОМАНД С ИСПОЛЬЗОВАНИЕМ ВСТРОЕННЫХ СВОЙСТВ TELEBOT
 @bot.message_handler(commands=['summary', 'rating', 'rateme', 'psycho', 'psychome', 'ask', 'poll', 'taro', 'song', 'edit', 'create', 'future', 'meme'])
 def handle_bot_commands(message):
-    raw_text = message.text or ""
-    first_word = raw_text.split()[0].lower() if raw_text.split() else ""
-    command_name = first_word.replace('/', '').split('@')[0]
-    process_ai_command(message, command_name)
+    try:
+        # Встроенный метод telebot: сам вытаскивает имя команды без слэшей, массивов и регулярных выражений
+        command_name = message.command
+        process_ai_command(message, command_name)
+    except Exception as e:
+        logger.error(f"Ошибка диспетчеризации команды: {str(e)}")
 
 # ПАССИВНЫЙ СБОР ЛОГОВ + АВТООТВЕТЫ В РЕЖИМЕ DIALOG
 @bot.message_handler(func=lambda message: True)
@@ -197,14 +199,12 @@ def log_and_auto_reply(message):
     kv.rpush(kv_key, f"[{username}]: {text}")
     kv.ltrim(kv_key, -150, -1)
     
-    # Проверяем, включен ли режим диалога для этого чата
+    # Проверяем режим диалога
     mode = kv.get(f"dialog_mode:{chat_id}")
     if mode == "on":
-        # Чтобы бот не отвечал сам на свои команды, проверяем слэш
         if text.startswith('/'): return
         try:
             bot.send_chat_action(chat_id, 'typing')
-            # Вызываем ИИ на комментирование конкретно этой реплики с учетом контекста чата
             history_array = kv.lrange(kv_key, 0, -1)
             context = "\n".join(history_array)
             answer = analyze_with_gemini(context, "dialog_reply")
@@ -222,14 +222,14 @@ def webhook():
         if json_data:
             update = telebot.types.Update.de_json(json_data)
             bot.process_new_updates([update])
-        return jsonify({'status': 'ok'}), 200
-    except Exception: return jsonify({'status': 'error'}), 500
+        return '', 200
+    except Exception: return '', 500
 
 @app.route('/health', methods=['GET'])
 def health(): return jsonify({'status': 'alive'}), 200
 
 @app.route('/', methods=['GET'])
-def index(): return jsonify({'message': 'StatBoy with Active Dialog is running'}), 200
+def index(): return jsonify({'message': 'StatBoy with Safe Parsing is running'}), 200
 
 if __name__ == '__main__':
     app.run(debug=False)
