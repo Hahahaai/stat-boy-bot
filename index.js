@@ -6,7 +6,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// Твой точный юзернейм (БЕЗ СОБАКЫ)
+// Твой точный юзернейм бота (БЕЗ СОБАКЫ)
 const BOT_USERNAME = 'stat_boyy_bot';
 
 const SYSTEM_PROMPT = `
@@ -22,7 +22,7 @@ const SYSTEM_PROMPT = `
 7. !sb ask [вопрос]: циничный ответ по контексту логов.
 8. !sb poll: опрос (Тема и 4 едких варианта ответа).
 9. !sb taro: расклад (Прошлое, Настоящее, Будущее и вердикт).
-10. !sb song: saундтрек жизни (Исполнитель, Трек, Пояснение, Строчка, Уровень позора от 1 до 5).
+10. !sb song: саундтрек жизни (Исполнитель, Трек, Пояснение, Строчка, Уровень позора от 1 до 5).
 11. !sb edit: концепт фотожабы и оценка идеи от 1 до 5.
 12. !sb create: едкий коммент и детализированный англоязычный промпт для Midjourney.
 13. !sb future: прогноз будущих сообщений (Уровень адекватности, Сценарный прогноз с репликамиников).
@@ -36,7 +36,7 @@ function escapeHTML(str) {
 }
 
 // 1. СЛУШАТЕЛЬ /help
-bot.hears(/^\/help(@[a-zA-Z0-9_]+)?$/i, async (ctx) => {
+bot.hears(/^\/help( @[a-zA-Z0-9_]+)?$/i, async (ctx) => {
   const text = ctx.message.text || '';
   if (text.includes('@') && !text.toLowerCase().includes(`@${BOT_USERNAME}`.toLowerCase())) return;
 
@@ -75,7 +75,6 @@ bot.on('message', async (ctx) => {
 
   // Обработка слэш-команд
   if (text.startsWith('/')) {
-    // Безопасный разбор строки без использования ломающихся методов массивов
     const firstSpaceIndex = text.indexOf(' ');
     const fullCommand = firstSpaceIndex === -1 ? text.slice(1) : text.slice(1, firstSpaceIndex);
     const args = firstSpaceIndex === -1 ? '' : text.slice(firstSpaceIndex + 1);
