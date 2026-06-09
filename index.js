@@ -161,4 +161,4 @@ module.exports = async (req, res) => {
   } else {
     res.status(200).send('StatBoy готов к работе через Вебхук и Vercel KV!');
   }
-};
+}; 
