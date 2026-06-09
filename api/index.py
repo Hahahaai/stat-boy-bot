@@ -69,16 +69,13 @@ def ask_gemini(command_name, text_context, args=""):
 @bot.message_handler(commands=['summary', 'rating', 'rateme', 'psycho', 'psychome', 'ask', 'poll', 'taro', 'song', 'edit', 'create', 'future', 'meme'])
 def handle_analysis_commands(message):
     raw_text = message.text or ""
-    words = raw_text.split()
     
-    # Безопасное извлечение имени команды без вылетов
-    if words:
-        first_word = words[0].lower()
-        command_name = first_word.replace('/', '').split('@')[0]
-        args = raw_text[len(words[0]):].strip()
-    else:
-        command_name = "summary"
-        args = ""
+    # Безопасное разделение на первое слово и остальной текст через partition
+    first_word, _, args = raw_text.partition(' ')
+    
+    # Чистим команду от слэша и юзернейма бота
+    clean_cmd = first_word.lower().replace('/', '')
+    command_name = clean_cmd.split('@')[0] if '@' in clean_cmd else clean_cmd
     
     # Реплика / контекст из Reply
     if message.reply_to_message and message.reply_to_message.text:
@@ -87,7 +84,7 @@ def handle_analysis_commands(message):
         context = raw_text
 
     bot.send_chat_action(message.chat.id, 'typing')
-    answer = ask_gemini(command_name, context, args)
+    answer = ask_gemini(command_name, context, args.strip())
     bot.reply_to(message, answer, parse_mode="HTML")
 
 # Роутинг вебхука Vercel
