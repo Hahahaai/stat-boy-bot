@@ -57,24 +57,34 @@ def analyze_with_gemini(text: str, command: str) -> str:
         logger.error(f"Ошибка Gemini: {str(e)}")
         return f"Ошибка анализа: {str(e)}"
 # ============= ОБРАБОТЧИКИ КОМАНД =============
+# ============= ОБРАБОТЧИКИ КОМАНД =============
 
 def process_ai_command(message, command_name):
     """Универсальная функция обработки аналитических команд."""
+    raw_text = message.text or ""
+    
+    # Безопасно отделяем саму команду от текста после нее
+    parts = raw_text.split(maxsplit=1)
+    args = parts[1].strip() if len(parts) > 1 else ""
+
+    # Собираем контекст: если есть Reply — берем текст оттуда, если нет — берем текст после команды
     if message.reply_to_message and message.reply_to_message.text:
         context_text = message.reply_to_message.text
     else:
-        raw_text = message.text or ""
-        parts = raw_text.split(maxsplit=1)
-        context_text = parts[1].strip() if len(parts) > 1 else ""
+        context_text = args
 
-    if not context_text and command_name != 'help':
-        bot.reply_to(message, "❌ Контекст пуст! Ответь этой командой на лог чата или напиши текст после команды.")
+    # Защита от слишком короткого текста (меньше 3 символов)
+    if not context_text or len(context_text.strip()) < 3:
+        bot.reply_to(message, "❌ Контекст пуст или слишком короткий! Ответь этой командой на длинный лог чата или напиши текст после команды.")
         return
 
     try:
         bot.send_chat_action(message.chat.id, 'typing')
+        
+        # Передаем данные в функцию Gemini
         answer = analyze_with_gemini(context_text, command_name)
         
+        # Безопасно экранируем HTML разметку
         clean_answer = answer.replace("<", "&lt;").replace(">", "&gt;")
         clean_answer = clean_answer.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
         clean_answer = clean_answer.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
@@ -85,31 +95,37 @@ def process_ai_command(message, command_name):
         logger.error(f"Ошибка выполнения {command_name}: {str(e)}")
         bot.reply_to(message, "Ошибка генерации ИИ.")
 
-# 1. Исправленный /help и /start — РАБОТАЮТ СВОБОДНО БЕЗ REPLY!
+# 1. Меню /help и /start
 @bot.message_handler(commands=['help', 'start'])
 def cmd_help(message):
     help_text = (
         "<b>🤖 StatBoy ИИ на связи. Список команд для кожаных мешков:</b>\n\n"
         "• <code>/help</code> — Вызов этого меню\n"
-        "• <code>/summary</code> — Показать выжимку бреда (Нужен Reply)\n"
-        "• <code>/rating</code> — Персональные диагнозы чату (Нужен Reply)\n"
-        "• <code>/rateme</code> — Твой личный табель позора (Reply или свой текст)\n"
-        "• <code>/psycho</code> — Психопортрет всех участников (Нужен Reply)\n"
+        "• <code>/dialog [текст]</code> — Общение со StatBoy как с обычной нейросетью\n"
+        "• <code>/summary</code> — Показать выжимку бреда (Нужен Reply на лог)\n"
+        "• <code>/rating</code> — Диагнозы чату (Нужен Reply на лог)\n"
+        "• <code>/rateme</code> — Твой личный табель позора\n"
+        "• <code>/psycho</code> — Психопортрет участников (Нужен Reply на лог)\n"
         "• <code>/psychome</code> — Твоя личная карта кукухи\n"
         "• <code>/ask [вопрос]</code> — Вопрос ИИ по контексту логов (Нужен Reply)\n"
         "• <code>/poll</code> — Создать токсичный опрос на основе логов\n"
         "• <code>/taro</code> — Расклад карт Таро на деградацию\n"
         "• <code>/song</code> — Саундтрек твоей нищей жизни\n"
         "• <code>/edit [запрос]</code> — Концепт оскорбительной фотожабы\n"
-        "• <code>/create [запрос]</code> — Сгенерировать промпт для нейросети\n"
+        "• <code>/create [запрос]</code> — Сгенерировать промпт для Midjourney\n"
         "• <code>/future</code> — Сценарное предсказание будущих сообщений чата\n"
         "• <code>/meme</code> — Создать шаблон демотиватора\n\n"
-        "<i>Для анализа переписки отправляй ИИ-команды ответом (Reply) на длинный лог чата!</i>"
+        "<i>Для команд анализа чата обязательно используй Reply (Ответ) на длинное сообщение с логами переписки!</i>"
     )
     try:
         bot.reply_to(message, help_text, parse_mode='HTML')
     except Exception as e:
         logger.error(f"Ошибка отправки help: {str(e)}")
+
+# Новая команда /dialog — свободное общение в токсичном стиле
+@bot.message_handler(commands=['dialog'])
+def cmd_dialog(message):
+    process_ai_command(message, 'ask')
 
 # Регистрация всех остальных 13 команд
 @bot.message_handler(commands=['summary'])
@@ -151,10 +167,10 @@ def cmd_future(message): process_ai_command(message, 'future')
 @bot.message_handler(commands=['meme'])
 def cmd_meme(message): process_ai_command(message, 'meme')
 
+
 # ==================== FLASK РОУТЫ ====================
 @app.route('/', methods=['POST'])
 def webhook():
-    """Прием updates от Telegram вебхука."""
     try:
         json_data = request.get_json()
         if json_data:
@@ -175,3 +191,4 @@ def index():
 
 if __name__ == '__main__':
     app.run(debug=False)
+
