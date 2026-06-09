@@ -32,9 +32,6 @@ SYSTEM_PROMPT = """
 ОБЩИЕ ПРАВИЛА: Все оценки от 1 до 5. Никакой пощады, будь высокомерным. Если лог пуст, высмей юзера.
 """
 
-def escapeHTML(str_val):
-    return str_val.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
 # Обработка /help
 @bot.message_handler(commands=['help'])
 def send_help(message):
@@ -70,26 +67,21 @@ def ask_gemini(command_name, text_context, args=""):
         print(f"Ошибка Gemini: {e}")
         return "Бот сломался от твоего кринжа."
 
-# Обработка команд анализа через Reply
+# Обработка ИИ-команд (telebot сам вытащит имя команды в message.command)
 @bot.message_handler(commands=['summary', 'rating', 'rateme', 'psycho', 'psychome', 'ask', 'poll', 'taro', 'song', 'edit', 'create', 'future', 'meme'])
 def handle_analysis_commands(message):
-    raw_text = message.text or ""
-    
-    # Извлекаем первое слово-команду
-    parts = raw_text.split()
-    first_word = parts[0] if parts else ""
-    
-    # Очищаем от слэша и отрезаем юзернейм бота, если он есть
-    clean_cmd = first_word.lower().replace('/', '')
-    command_name = clean_cmd.split('@')[0]
-    
-    if command_name == 'help':
-        return
+    try:
+        # Встроенный метод telebot: берет чистое имя команды (например, 'summary')
+        command_name = message.command[0]
+    except Exception:
+        command_name = "summary"
         
-    # Вытаскиваем аргументы пользователя
-    args = raw_text[len(first_word):].strip()
+    # Встроенный метод telebot: берет всё, что написано после команды (аргументы)
+    raw_text = message.text or ""
+    parts = raw_text.split(maxsplit=1)
+    args = parts[1] if len(parts) > 1 else ""
     
-    # Реплика / контекст из Reply
+    # Извлекаем текст из Reply
     if message.reply_to_message and message.reply_to_message.text:
         context = message.reply_to_message.text
     else:
@@ -97,7 +89,7 @@ def handle_analysis_commands(message):
 
     try:
         bot.send_chat_action(message.chat.id, 'typing')
-        answer = ask_gemini(command_name, context, args)
+        answer = ask_gemini(command_name, context, args.strip())
         bot.reply_to(message, answer, parse_mode="HTML")
     except Exception as e:
         print(f"Ошибка отправки ответа: {e}")
